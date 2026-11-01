@@ -8,7 +8,7 @@
 namespace DispatchDedup {
 using namespace AscendC;
 
-// Two independent owners: fixed physical slot modulo R for inspection/relay,
+// Two independent owners: (region+q) modulo R for inspection/relay,
 // balanced output-row intervals for output. Only output owner clears flags,
 // after its own load and the inspector's 1.25 publication. Never spin on a
 // single handoff: both work streams keep making progress in each outer turn.
@@ -27,7 +27,8 @@ public:
             (WireFp8?EpServerDedupInputMode::Quantize16:EpServerDedupInputMode::Plain16);
         data_=DispatchServerDedupDataLayout(bs,h,k,experts,mode);
         window_=DispatchServerDedupWindowOffset(magic);
-        slots_=experts*bs;owned_=ForwardSlots(slots_,receiver_,receivers_);forwardLeft_=owned_;
+        slots_=experts*bs;owned_=ForwardSlots(experts,bs,receiver_,receivers_);forwardLeft_=owned_;
+        forwardQ_=ForwardFirstQ(0U,receiver_,receivers_);
         taskCapacity_=uint32_t((uint64_t(args->rankSize)*bs*(k<localExperts_?k:localExperts_)+receivers_-1)/receivers_);
         x_.SetGlobalBuffer(expandX);scales_.SetGlobalBuffer(scales);
         types_.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t*>(types));
@@ -215,11 +216,17 @@ private:
         StartPoll();
         uint32_t count=0;auto ids=indexBuf_.Get<uint32_t>();
         for(uint32_t visit=0;visit<kBatch && visit<owned_;++visit) {
-            if(forwardCursor_==owned_)forwardCursor_=0;
-            const uint32_t j=forwardCursor_++,pos=receiver_+j*receivers_;
+            if(forwardCursor_==owned_) {
+                forwardCursor_=0;forwardRegion_=0;forwardQ_=ForwardFirstQ(0U,receiver_,receivers_);
+            }
+            while(forwardQ_>=bs_) {
+                ++forwardRegion_;forwardQ_=ForwardFirstQ(forwardRegion_,receiver_,receivers_);
+            }
+            const uint32_t j=forwardCursor_++,pos=forwardRegion_*bs_+forwardQ_;
+            forwardQ_+=receivers_;
             if(Seen(j))continue;
             if(prefixReady_ && !Valid(pos)){See(j);continue;}
-            ids.SetValue(count,j);ReadServerDedupFlags(Slot(pos),uint32_t(data_.blockCount),flagsBuf_.Get<float>()[count*data_.blockCount*8U],true);++count;
+            ids.SetValue(count,pos);ReadServerDedupFlags(Slot(pos),uint32_t(data_.blockCount),flagsBuf_.Get<float>()[count*data_.blockCount*8U],true);++count;
         }
         if(!count)return;
         Probe(count);
@@ -232,8 +239,9 @@ private:
         for(uint32_t i=0;i<count;++i) {
             if(!(readyMask&(1U<<i)))continue;
             auto state=PacketReceiveLayout::Decode(sumBuf_.Get<float>().GetValue(i),uint32_t(data_.blockCount));
-            uint32_t j=ids.GetValue(i);See(j);
-            if(state!=PacketReceiveLayout::State::Taken)Inspect(receiver_+j*receivers_);
+            const uint32_t pos=ids.GetValue(i);
+            See(ForwardIndex(pos/bs_,pos%bs_,bs_,receiver_,receivers_));
+            if(state!=PacketReceiveLayout::State::Taken)Inspect(pos);
         }
         FinishBatch(ready);
     }
@@ -326,6 +334,7 @@ private:
     EpServerDedupDataLayout data_{};uint64_t window_=0;
     uint32_t receivers_=0,receiver_=0,bs_=0,k_=0,experts_=0,localExperts_=0,hiddenBytes_=0;
     uint32_t slots_=0,owned_=0,forwardLeft_=0,forwardCursor_=0,outputCursor_=0,sequence_=0;
+    uint32_t forwardRegion_=0,forwardQ_=0;
     uint32_t taskCapacity_=0,begin_=0,outputCount_=0,pending_=0,lanes_=0,stride_=0,batches_=0;
     bool prefixReady_=false,dedup_=false,firstReady_=false;
     uint64_t pollTicks_=0,consumeTicks_=0;

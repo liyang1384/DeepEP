@@ -17,7 +17,7 @@ def test_real_metadata_counts(tmp_path,metadata):
     assert 'PASS metadata count exchange, prefix, balanced tasks 90 cases' in result.stdout
 
 @pytest.mark.parametrize('profile',[False,True])
-@pytest.mark.parametrize('aiv',[16,72])
+@pytest.mark.parametrize('aiv',[16,56,72])
 def test_real_receiver_and_stage_wire(tmp_path,profile,aiv):
     zig=os.environ.get('DEEPEP_TEST_ZIG')
     if not zig: pytest.skip('Set DEEPEP_TEST_ZIG for CPU validation')

@@ -198,7 +198,9 @@ inline bool DispatchDedupPacketUbFits(const EpMemoryServerDedupLayout& layout, i
                             align(tokens * 4, 32) + align(tokens * k * 16, 32) + 64 + align(groups * 4, 32) +
                             layout.data.tokenStride;
     const uint64_t serverStateExtra = std::max<uint64_t>(64U, align(world_size / LlGroupForWorld(uint32_t(world_size)) * 4U, 32U)) - 64U;
-    const uint64_t candidates = (uint64_t(num_experts)*b + cores-1U)/cores;
+    uint64_t candidates = 0U;
+    for(uint32_t owner=0;owner<cores;++owner)
+        candidates=std::max<uint64_t>(candidates,ForwardSlots(uint32_t(num_experts),uint32_t(b),owner,cores));
     const uint64_t bitmap = std::max<uint64_t>(32U,align((candidates+31U)/32U*4U,32U));
     const uint64_t receiver = align(num_experts*4U,32U)+bitmap+
         2U*align(((layout.capacityRows+cores-1U)/cores)*4U,32U)+64U+

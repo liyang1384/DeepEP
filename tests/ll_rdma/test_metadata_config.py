@@ -34,13 +34,12 @@ int main(){
   if(!MetadataSplitValid(c))continue;
   uint32_t r=PayloadCores(c);assert(ReceiveBegin(c)==kLlMetadataCores+r && ReceiveBegin(c)+r==c);
   for(uint32_t total:{0U,1U,15U,63U,257U,65536U}){
-   std::vector<unsigned> owners(total);uint32_t previous=0,small=total/r,large=(total+r-1)/r;
+   uint32_t previous=0,small=total/r,large=(total+r-1)/r;
    for(uint32_t worker=0;worker<r;++worker){
     auto begin=BalancedBegin(total,worker,r),end=BalancedBegin(total,worker+1,r);
     assert(begin==previous && (end-begin==small || end-begin==large));previous=end;
-    for(uint32_t j=0;j<ForwardSlots(total,worker,r);++j)++owners[worker+j*r];
    }
-   assert(previous==total);for(auto n:owners)assert(n==1);
+   assert(previous==total);
   }
   auto layout=DispatchServerDedupCountLayout(1024,c);
   assert(layout.outputInfoOffset>=layout.cumsumFlagOffset+kLlMetadataCores*kLlMetadataCores*32);

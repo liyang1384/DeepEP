@@ -82,7 +82,7 @@ struct Fixture {
             for(uint32_t c=0;c<R;++c){uint32_t info[8]={BalancedBegin(n,c,R),BalancedBegin(n,c+1,R)};std::memcpy(gm.data()+l.cntOffset+l.outputInfoOffset+c*32,info,32);float ready[8]={1,1,1,1,1,1,1,1};std::memcpy(gm.data()+l.cntOffset+l.outputReadyOffset+c*32,ready,32);}
         };
         std::atomic<bool> release{!outputFirst};
-        const uint32_t owner=n?slots[0]%R:0U, outputOwner=R-1; // single-row case
+        const uint32_t owner=n?ForwardOwner(slots[0]/bs,slots[0]%bs,R):0U, outputOwner=R-1; // single-row case
         if(outputFirst)assert(n==1 && owner!=outputOwner);
         if(n)packet(0);
         if(!delayedPrefix)publish();

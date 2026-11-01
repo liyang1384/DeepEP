@@ -18,8 +18,25 @@ LL_META_INLINE constexpr bool MetadataSplitValid(uint32_t cores) {
 }
 LL_META_INLINE constexpr uint32_t PayloadCores(uint32_t cores) { return (cores-kLlMetadataCores)/2U; }
 LL_META_INLINE constexpr uint32_t ReceiveBegin(uint32_t cores) { return kLlMetadataCores+PayloadCores(cores); }
-LL_META_INLINE constexpr uint32_t ForwardSlots(uint32_t slots,uint32_t core,uint32_t cores) {
-    return slots > core ? (slots-1U-core)/cores+1U : 0U;
+// Physical wire slots stay region*B+q. Rotate each region's q ownership so
+// even B and mostly q=0 routes do not strand half of an even receiver group.
+LL_META_INLINE constexpr uint32_t ForwardOwner(uint32_t region,uint32_t q,uint32_t cores) {
+    return (region+q)%cores;
+}
+LL_META_INLINE constexpr uint32_t ForwardFirstQ(uint32_t region,uint32_t core,uint32_t cores) {
+    return (core+cores-region%cores)%cores;
+}
+// Number of this core's slots in [0,regions). Full groups of R regions
+// contribute B slots; count the intersection of the remaining cyclic arc.
+LL_META_INLINE constexpr uint32_t ForwardSlots(uint32_t regions,uint32_t bs,uint32_t core,uint32_t cores) {
+    const uint32_t rem=regions%cores,tail=bs%cores,high=core+1U;
+    const uint32_t low=high>tail?high-tail:0U;
+    const uint32_t upper=rem<high?rem:high,lower=rem<low?rem:low;
+    const uint32_t wrap=tail>high?cores-(tail-high):cores;
+    return regions*(bs/cores)+(regions/cores)*tail+upper-lower+(rem>wrap?rem-wrap:0U);
+}
+LL_META_INLINE constexpr uint32_t ForwardIndex(uint32_t region,uint32_t q,uint32_t bs,uint32_t core,uint32_t cores) {
+    return ForwardSlots(region,bs,core,cores)+q/cores;
 }
 LL_META_INLINE constexpr uint32_t BalancedBegin(uint32_t total,uint32_t core,uint32_t cores) {
     return uint32_t(uint64_t(total)*core/cores);
