@@ -27,7 +27,7 @@ public:
             (WireFp8?EpServerDedupInputMode::Quantize16:EpServerDedupInputMode::Plain16);
         data_=DispatchServerDedupDataLayout(bs,h,k,experts,mode);
         window_=DispatchServerDedupWindowOffset(magic);
-        slots_=experts*bs;owned_=ForwardSlots(experts,bs,receiver_,receivers_);forwardLeft_=owned_;
+        owned_=ForwardSlots(experts,bs,receiver_,receivers_);forwardLeft_=owned_;
         forwardQ_=ForwardFirstQ(0U,receiver_,receivers_);
         taskCapacity_=uint32_t((uint64_t(args->rankSize)*bs*(k<localExperts_?k:localExperts_)+receivers_-1)/receivers_);
         x_.SetGlobalBuffer(expandX);scales_.SetGlobalBuffer(scales);
@@ -136,15 +136,63 @@ private:
     __aicore__ inline GM_ADDR Slot(uint32_t pos) {return args_->peerMems[args_->rank]+window_+data_.dispatchOffset+uint64_t(pos)*data_.tokenStride;}
     __aicore__ inline bool Seen(uint32_t j) {return (seenBuf_.Get<uint32_t>().GetValue(j/32)&(1U<<(j%32)))!=0;}
     __aicore__ inline void See(uint32_t j) {
-        auto bits=seenBuf_.Get<uint32_t>();bits.SetValue(j/32,bits.GetValue(j/32)|(1U<<(j%32)));--forwardLeft_;
+        auto bits=seenBuf_.Get<uint32_t>();const uint32_t mask=1U<<(j%32),old=bits.GetValue(j/32);
+        bits.SetValue(j/32,sparseForward_?(old&~mask):(old|mask));--forwardLeft_;
     }
-    __aicore__ inline bool Valid(uint32_t pos) {
-        const uint32_t region=pos/bs_,q=pos%bs_;
+    __aicore__ inline uint32_t RegionCount(uint32_t region) {
         const uint32_t source=(region/localExperts_+uint32_t(args_->rankSize)-uint32_t(args_->rank))%uint32_t(args_->rankSize);
         const uint32_t record=(region%localExperts_)*uint32_t(args_->rankSize)+source;
         auto prefix=prefixBuf_.Get<int32_t>();
         const uint32_t previous=record?uint32_t(prefix.GetValue(record-1)):0;
-        return q<uint32_t(prefix.GetValue(record))-previous;
+        return uint32_t(prefix.GetValue(record))-previous;
+    }
+    __aicore__ inline void InstallPendingWord(uint32_t word,uint32_t valid) {
+        auto bits=seenBuf_.Get<uint32_t>();uint32_t pending=valid&~bits.GetValue(word);
+        bits.SetValue(word,pending);
+        while(pending){++forwardLeft_;pending&=pending-1U;}
+    }
+    __aicore__ inline void CompactForward() {
+        // Reuse the same bitmap: before prefix, 1 means already inspected;
+        // afterwards, 1 means valid and still pending. Visit only real q ranges
+        // to construct masks; old seen bits exclude packets handled early.
+        uint32_t word=0U,valid=0U;forwardLeft_=0U;
+        for(uint32_t region=0;region<experts_;++region) {
+            const uint32_t count=RegionCount(region),limit=count<bs_?count:bs_;
+            const uint32_t base=ForwardSlots(region,bs_,receiver_,receivers_);
+            for(uint32_t q=ForwardFirstQ(region,receiver_,receivers_);q<limit;q+=receivers_) {
+                const uint32_t j=base+q/receivers_,target=j/32U;
+                while(word<target){InstallPendingWord(word++,valid);valid=0U;}
+                valid|=1U<<(j%32U);
+            }
+        }
+        const uint32_t words=(owned_+31U)/32U;
+        while(word<words){InstallPendingWord(word++,valid);valid=0U;}
+        forwardCursor_=0U;sparseForward_=true;
+    }
+    __aicore__ inline uint32_t SparseForwardBatch(LocalTensor<uint32_t> ids) {
+        auto bits=seenBuf_.Get<uint32_t>();uint32_t count=0U,visited=0U;
+        // Skip empty words; enumerate each pending bit at most once per batch,
+        // including across wrap. Failed probes retain their bit for later rounds.
+        while(count<kBatch && visited<owned_) {
+            const uint32_t word=forwardCursor_/32U,offset=forwardCursor_%32U;
+            const uint32_t remaining=bits.GetValue(word)&(~0U<<offset);
+            if(!remaining) {
+                uint32_t step=32U-offset;
+                if(step>owned_-forwardCursor_)step=owned_-forwardCursor_;
+                if(step>owned_-visited)step=owned_-visited;
+                visited+=step;forwardCursor_+=step;
+                if(forwardCursor_==owned_)forwardCursor_=0U;
+                continue;
+            }
+            const uint32_t j=word*32U+ForwardFirstBit(remaining),step=j-forwardCursor_+1U;
+            if(step>owned_-visited)break;
+            visited+=step;forwardCursor_=j+1U;if(forwardCursor_==owned_)forwardCursor_=0U;
+            const uint32_t pos=ForwardPosition(j,bs_,receiver_,receivers_);
+            ids.SetValue(count,pos);
+            ReadServerDedupFlags(Slot(pos),uint32_t(data_.blockCount),flagsBuf_.Get<float>()[count*data_.blockCount*8U],true);
+            ++count;
+        }
+        return count;
     }
     __aicore__ inline void AcquirePrefix() {
         const auto layout=DispatchServerDedupCountLayout(experts_,GetBlockNum());
@@ -214,8 +262,11 @@ private:
     __aicore__ inline void ForwardBatch() {
         if(!forwardLeft_)return;
         StartPoll();
+        if(prefixReady_ && !sparseForward_)CompactForward();
+        if(!forwardLeft_)return;
         uint32_t count=0;auto ids=indexBuf_.Get<uint32_t>();
-        for(uint32_t visit=0;visit<kBatch && visit<owned_;++visit) {
+        if(sparseForward_)count=SparseForwardBatch(ids);
+        else for(uint32_t visit=0;visit<kBatch && visit<owned_;++visit) {
             if(forwardCursor_==owned_) {
                 forwardCursor_=0;forwardRegion_=0;forwardQ_=ForwardFirstQ(0U,receiver_,receivers_);
             }
@@ -225,7 +276,6 @@ private:
             const uint32_t j=forwardCursor_++,pos=forwardRegion_*bs_+forwardQ_;
             forwardQ_+=receivers_;
             if(Seen(j))continue;
-            if(prefixReady_ && !Valid(pos)){See(j);continue;}
             ids.SetValue(count,pos);ReadServerDedupFlags(Slot(pos),uint32_t(data_.blockCount),flagsBuf_.Get<float>()[count*data_.blockCount*8U],true);++count;
         }
         if(!count)return;
@@ -333,10 +383,10 @@ private:
     const __gm__ CommArgs* args_=nullptr;TPipe* pipe_=nullptr;LlReferenceProfile::DeviceProfile* profile_=nullptr;
     EpServerDedupDataLayout data_{};uint64_t window_=0;
     uint32_t receivers_=0,receiver_=0,bs_=0,k_=0,experts_=0,localExperts_=0,hiddenBytes_=0;
-    uint32_t slots_=0,owned_=0,forwardLeft_=0,forwardCursor_=0,outputCursor_=0,sequence_=0;
+    uint32_t owned_=0,forwardLeft_=0,forwardCursor_=0,outputCursor_=0,sequence_=0;
     uint32_t forwardRegion_=0,forwardQ_=0;
     uint32_t taskCapacity_=0,begin_=0,outputCount_=0,pending_=0,lanes_=0,stride_=0,batches_=0;
-    bool prefixReady_=false,dedup_=false,firstReady_=false;
+    bool prefixReady_=false,dedup_=false,firstReady_=false,sparseForward_=false;
     uint64_t pollTicks_=0,consumeTicks_=0;
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
     uint64_t pollStart_=0;

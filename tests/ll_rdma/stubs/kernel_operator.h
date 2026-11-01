@@ -18,6 +18,7 @@ inline std::mutex memoryMutex;
 #ifdef DEEPEP_TEST_METADATA_COPY
 inline thread_local void (*observeStore)(void*,const void*,uint32_t)=nullptr;
 inline thread_local void (*observeMte3Completion)()=nullptr;
+inline thread_local void (*observeLoad)(const void*,uint32_t)=nullptr;
 #endif
 #ifdef DEEPEP_TEST_ROUTE_THREADS
 struct DeferredMte2Copy { void* dst;const void* src;uint32_t bytes; };
@@ -106,6 +107,9 @@ struct DataCopyParams { uint16_t blockCount, blockLen, srcStride, dstStride; };
 inline std::atomic<uint32_t> stridedCopies{0};
 template<class T> void DataCopy(LocalTensor<T> dst, GlobalTensor<T> src, DataCopyParams c) {
     std::lock_guard<std::mutex> guard(memoryMutex);
+#ifdef DEEPEP_TEST_METADATA_COPY
+    if(observeLoad)observeLoad(src.p,c.blockCount*c.blockLen*32U);
+#endif
     ++stridedCopies;
     for (uint32_t i=0; i<c.blockCount; ++i)
         std::memcpy(reinterpret_cast<uint8_t*>(dst.p) + i*(c.blockLen+c.dstStride)*32U,
@@ -125,6 +129,9 @@ template<class T> void DataCopy(GlobalTensor<T> d, LocalTensor<T> s, uint32_t n)
 #endif
 }
 template<class T> void DataCopy(LocalTensor<T> d, GlobalTensor<T> s, uint32_t n) {
+#ifdef DEEPEP_TEST_METADATA_COPY
+    if(observeLoad)observeLoad(s.p,n*sizeof(T));
+#endif
 #ifdef DEEPEP_TEST_ROUTE_THREADS
     deferredMte2.push_back({d.p,s.p,uint32_t(n*sizeof(T))});
 #else

@@ -38,6 +38,26 @@ LL_META_INLINE constexpr uint32_t ForwardSlots(uint32_t regions,uint32_t bs,uint
 LL_META_INLINE constexpr uint32_t ForwardIndex(uint32_t region,uint32_t q,uint32_t bs,uint32_t core,uint32_t cores) {
     return ForwardSlots(region,bs,core,cores)+q/cores;
 }
+// Invert the compact bitmap index. Each full R-region block has exactly B
+// entries, so only the at-most-R regions inside that block need searching.
+LL_META_INLINE constexpr uint32_t ForwardPosition(uint32_t index,uint32_t bs,uint32_t core,uint32_t cores) {
+    uint32_t low=(index/bs)*cores,high=low+cores;
+    while(low<high) {
+        const uint32_t middle=low+(high-low)/2U;
+        if(ForwardSlots(middle+1U,bs,core,cores)<=index)low=middle+1U;
+        else high=middle;
+    }
+    return low*bs+ForwardFirstQ(low,core,cores)+
+        (index-ForwardSlots(low,bs,core,cores))*cores;
+}
+LL_META_INLINE constexpr uint32_t ForwardFirstBit(uint32_t word) {
+    uint32_t bit=0;
+    if((word&0xffffU)==0U){word>>=16U;bit+=16U;}
+    if((word&0xffU)==0U){word>>=8U;bit+=8U;}
+    if((word&0xfU)==0U){word>>=4U;bit+=4U;}
+    if((word&0x3U)==0U){word>>=2U;bit+=2U;}
+    return bit+((word&1U)==0U?1U:0U); // caller supplies a nonzero word
+}
 LL_META_INLINE constexpr uint32_t BalancedBegin(uint32_t total,uint32_t core,uint32_t cores) {
     return uint32_t(uint64_t(total)*core/cores);
 }

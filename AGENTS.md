@@ -1,3 +1,10 @@
+## M=4 R核接管与有效扫描（2026-11-02，本聊天）
+
+- 用户要求M=4、当前topk造数不变，按独立commit先改接管owner，再改前缀后有效槽扫描；本次仅本地检查和提交，暂不推送、不SSH/CANN/NPU。
+- owner为(region+q)%R，wire槽仍region*B+q，Host/Device同步紧凑bitmap容量；搬出owner保持实际任务均分。
+- 前缀后在原bitmap中构造valid & ~seen，仅扫描有效未接管位；保留1.25接管、完整flags检查、搬出后等接管才能清flag、lane/CQ生命周期和零任务路径。
+- 基线59d008d，逐版本测试与本地bundle说明见tests/ll_rdma/RECEIVER_OWNER_SCAN.md；不改SDK、combine、造数和其他独立实验工作区。
+
 ## 满stage与combine回传（2026-10-29，默认34/直方图35）
 
 - 用户第一项已实施：dispatch GM批容量floor(128KiB/packetBytes)，删除固定8包上限；按peer位图去重避免包序号超过32位，UB lane与GM分配量不改。独立提交4c12865（身份32/33）。

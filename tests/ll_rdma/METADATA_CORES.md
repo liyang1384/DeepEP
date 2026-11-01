@@ -36,6 +36,7 @@ MTE-only域按原覆盖的全域rank轮转，EP16即本机16rank，不遗漏目�
 
 固定候选槽编号为 `(((source+destination)%EP)*localExperts+expert)*B+q`，总计E×B；这是实际B，capacity不参与槽编号。
 转发owner为 `(region+q)%R`，其中`slot=region*B+q`，在prefix就绪前可扫描并转发FIRST_HOP；prefix就绪后剔除无效q，但仍处理晚到包。
+前缀后复用原bitmap构造有效未接管集合，跳过零word，不再逐个探测无效候选槽；提前接管项不重复加入。
 2026-11-02接管分工实验保持M=4和造数；逐提交对照见[RECEIVER_OWNER_SCAN.md](RECEIVER_OWNER_SCAN.md)。
 每核UB位图记录已接管槽，防止重复转发。DIRECT、TERMINAL同样由固定owner检查并接管。
 

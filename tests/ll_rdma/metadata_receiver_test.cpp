@@ -13,12 +13,29 @@ using namespace std::chrono_literals;
 #ifndef DEEPEP_TEST_AIV
 #define DEEPEP_TEST_AIV 16
 #endif
-constexpr uint32_t P=32,E=32,H=256,K=2,C=DEEPEP_TEST_AIV;
+#ifndef DEEPEP_TEST_EXPERTS
+#define DEEPEP_TEST_EXPERTS 32
+#endif
+constexpr uint32_t P=32,E=DEEPEP_TEST_EXPERTS,L=E/P,H=256,K=2,C=DEEPEP_TEST_AIV;
 constexpr uint32_t R=(C-kLlMetadataCores)/2;
 static uint8_t* observedPeer;
-static uint32_t observedBytes, relayCopies;
+static uint32_t observedBytes, observedPeerBytes, relayCopies;
+static uintptr_t observedPrefix,observedSlots;
+static uint32_t observedStride,observedSlotCount;
+static std::vector<bool> validSlots;
+static thread_local bool prefixObserved=false;
+static thread_local uint32_t postPrefixFlagReads=0;
+static void observeReceiverLoad(const void* source,uint32_t) {
+    const auto address=reinterpret_cast<uintptr_t>(source);
+    if(address==observedPrefix)prefixObserved=true;
+    if(address>=observedSlots+480U && address<observedSlots+uint64_t(observedSlotCount)*observedStride &&
+       (address-observedSlots)%observedStride==480U && prefixObserved){
+        assert(validSlots[(address-observedSlots)/observedStride]);
+        ++postPrefixFlagReads;
+    }
+}
 static void observeRelay(void* dst,const void*,uint32_t bytes) {
-    if(static_cast<uint8_t*>(dst)>=observedPeer && static_cast<uint8_t*>(dst)<observedPeer+(4U<<20) && bytes==observedBytes)++relayCopies;
+    if(static_cast<uint8_t*>(dst)>=observedPeer && static_cast<uint8_t*>(dst)<observedPeer+observedPeerBytes && bytes==observedBytes)++relayCopies;
 }
 
 static void stage_test() {
@@ -38,7 +55,7 @@ static void stage_test() {
     }
 }
 struct Fixture {
-    std::vector<uint8_t> gm=std::vector<uint8_t>(4U<<20), peer=gm;
+    std::vector<uint8_t> gm=std::vector<uint8_t>((4U<<20)+E*32U*1024U), peer=gm;
     CommArgs args{};
     Fixture(){args.rank=0;args.rankSize=P;args.peerMemBytes=gm.size();args.peerMems[0]=gm.data();args.peerMems[1]=peer.data();}
     void combineStage(uint32_t bs,uint32_t hidden){
@@ -56,9 +73,13 @@ struct Fixture {
         auto d=DispatchServerDedupDataLayout(bs,H,K,E,Fp8?EpServerDedupInputMode::PrequantizedFp8Packs:EpServerDedupInputMode::Plain16);
         auto l=DispatchServerDedupCountLayout(E,C);
         uint32_t n=sources*bs;
-        observedPeer=peer.data();observedBytes=d.tokenStride;relayCopies=0;observeStore=observeRelay;
+        observedPeer=peer.data();observedPeerBytes=peer.size();observedBytes=d.tokenStride;relayCopies=0;observeStore=observeRelay;
         std::vector<int32_t> prefix(E),slots;
-        for(uint32_t s=0;s<P;++s){uint32_t count=s>=16 && s<16+sources?bs:0;prefix[s]=(s?prefix[s-1]:0)+count;for(uint32_t q=0;q<count;++q)slots.push_back(s*bs+q);}
+        for(uint32_t record=0;record<E;++record){uint32_t s=record%P,count=record<P && s>=16 && s<16+sources?bs:0;prefix[record]=(record?prefix[record-1]:0)+count;for(uint32_t q=0;q<count;++q)slots.push_back(s*L*bs+q);}
+        observedPrefix=reinterpret_cast<uintptr_t>(gm.data()+l.cntOffset+l.prefixOffset);
+        observedSlots=reinterpret_cast<uintptr_t>(gm.data()+d.dispatchOffset);
+        observedStride=d.tokenStride;observedSlotCount=E*bs;validSlots.assign(E*bs,false);
+        for(auto slot:slots)validSlots[slot]=true;
         std::vector<uint8_t> out(n*hiddenBytes,0),scale(n*d.scaleBytes+32);
         std::vector<uint32_t> type(n),dest(n*3),relay(n*K*2);
         std::vector<uint64_t> trace(C*LlReferenceProfile::kWordsPerCore,0);
@@ -67,9 +88,9 @@ struct Fixture {
             std::vector<uint8_t> wire(d.tokenStride,0),compact(d.packedPayloadBytes,0);
             std::fill_n(compact.begin(),hiddenBytes,uint8_t(index+1));
             if(Fp8)std::fill_n(compact.begin()+d.quantCount,d.scaleBytes,0x73);
-            uint32_t header[]={source,slot%bs,0,uint32_t(Dedup?EpServerDedupTokenType::FirstHop:EpServerDedupTokenType::Direct),0,0,0,0};
+            uint32_t header[]={source/L,slot%bs,0,uint32_t(Dedup?EpServerDedupTokenType::FirstHop:EpServerDedupTokenType::Direct),0,0,0,0};
             std::memcpy(compact.data()+d.headerPayloadOffset,header,32);
-            uint32_t read[]={1,0,1U|((slot%bs)<<16),0};
+            uint32_t read[]={1,0,L|((slot%bs)<<16),0};
             std::memcpy(compact.data()+d.readIndexPayloadOffset,read,16);
             for(uint32_t b=0;b<d.blockCount;++b){std::memcpy(wire.data()+b*512,compact.data()+b*480,480);for(uint32_t f=0;f<8;++f){float v=b==0 && f==0?1.5f:1.0f;std::memcpy(wire.data()+b*512+480+f*4,&v,4);}}
             std::lock_guard<std::mutex> lock(memoryMutex);
@@ -90,6 +111,7 @@ struct Fixture {
         for(uint32_t c=0;c<R;++c)workers.emplace_back([&,c]{
             cores=C;core=ReceiveBegin(C)+c;
             observeStore=observeRelay;
+            prefixObserved=false;postPrefixFlagReads=0;observeLoad=observeReceiverLoad;
             if(c==owner)while(!release.load())std::this_thread::yield();
             TPipe pipe;ServerDedupReceiver<uint16_t,Fp8,false,Fp8> receiver;
             receiver.Init(&args,out.data(),scale.data(),reinterpret_cast<uint8_t*>(type.data()),reinterpret_cast<uint8_t*>(dest.data()),reinterpret_cast<uint8_t*>(relay.data()),bs,H,K,E,&pipe,0,Dedup);
@@ -105,6 +127,7 @@ struct Fixture {
             receiver.Process();
 #endif
             for(auto &event:events)for(bool live:event)assert(!live);
+            assert(prefixObserved);if(!n)assert(postPrefixFlagReads==0);observeLoad=nullptr;
         });
         if(outputFirst){
             bool moved=false;
@@ -125,8 +148,8 @@ struct Fixture {
             for(uint32_t j=0;j<hiddenBytes;++j)assert(out[row*hiddenBytes+j]==uint8_t(row+1));
             if(Fp8)for(uint32_t j=0;j<d.scaleBytes;++j)assert(scale[row*d.scaleBytes+j]==0x73);
             assert(type[row]==(Dedup?uint32_t(EpServerDedupTokenType::FirstHop):0U));
-            assert(dest[row*3]==slots[row]/bs && dest[row*3+1]==slots[row]%bs);
-            uint64_t forwarded=DispatchServerDedupDispatchOffset(d,slots[row]/bs,1,0,slots[row]%bs,P,1,bs);
+            assert(dest[row*3]==slots[row]/bs/L && dest[row*3+1]==slots[row]%bs);
+            uint64_t forwarded=DispatchServerDedupDispatchOffset(d,slots[row]/bs/L,1,0,slots[row]%bs,P,L,bs);
             if(Dedup){assert(peer[forwarded]==uint8_t(row+1));
                 uint32_t forwardedType;std::memcpy(&forwardedType,peer.data()+forwarded+d.headerWireOffset+12,4);assert(forwardedType==uint32_t(EpServerDedupTokenType::Terminal));}
         }
@@ -135,4 +158,4 @@ struct Fixture {
         for(uint32_t i=0;i<R*32;++i)assert(gm[l.cntOffset+l.outputReadyOffset+i]==0);
     }
 };
-int main(){stage_test();Fixture a,b;for(uint32_t cycle=0;cycle<6;++cycle){a.run(1,1,false,true);b.run(2,16,true,false);a.combineStage(1,384);a.run(3,7,false,false);b.run(1,1,true,false);b.run(2,0,false,false);a.run<true>(2,8,true,false);a.run<false,false>(1,5,false,false);}std::cout<<"PASS stage wire and 42 concurrent receiver reuse cases\n";}
+int main(){stage_test();Fixture a,b;for(uint32_t cycle=0;cycle<6;++cycle){a.run(1,1,false,true);b.run(2,16,true,false);a.combineStage(1,384);a.run(3,7,false,false);b.run(1,1,true,false);b.run(2,0,false,false);a.run<true>(2,8,true,false);a.run<false,false>(1,5,false,false);}a.run(32,8,true,false);std::cout<<"PASS stage wire and 43 concurrent receiver reuse cases\n";}

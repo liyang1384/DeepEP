@@ -32,6 +32,7 @@ int main(){
     const unsigned owner=(region+q)%r;
     assert(ForwardOwner(region,q,r)==owner);
     assert(ForwardIndex(region,q,b,owner,r)==counts[owner]++);
+    assert(ForwardPosition(counts[owner]-1,b,owner,r)==region*b+q);
    }
    for(unsigned owner=0;owner<r;++owner)
     assert(ForwardSlots(region+1,b,owner,r)==counts[owner]);
@@ -46,6 +47,7 @@ int main(){
    }
   }
  }
+ for(unsigned bit=0;bit<32;++bit)assert(ForwardFirstBit(1U<<bit)==bit);
  std::cout<<"PASS all slots, compact bitmap bounds, partial regions, R=1..36\n";
 }
 ''', encoding='utf-8')
