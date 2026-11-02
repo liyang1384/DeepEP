@@ -1,4 +1,62 @@
-# SHMEM官方master修复更新（2026-10-30）
+# Metadata 分支 SHMEM 版本对照（2026-11-02）
+
+本次对照使用同一份 R 核接管和有效槽扫描实现。A 锁定 `4c671684`，B 锁定
+`8e3fc610`。B 的父提交即 A，两棵源码树只在 SHMEM gitlink 和依赖锁的 revision 上有差异。
+各节点按当前 checkout 的依赖锁校验 SDK 源码、六个公开头指纹、安装库、wheel 和 HNS1825 PI 身份。
+此实验可能同时测到该版本范围内多项上游改动的影响。
+
+在每个节点将本地交付的增量 bundle 放在实验目录之外，使用一个全新 clone。两节点分别设置
+NODE_RANK=0、1，MASTER_ADDR 填首机地址。以下示例沿用 M4、normal、seed0 和默认 scalar
+计数；原部署使用 histogram 时，两轮都把 COUNT_METHOD 设为 histogram。
+
+```bash
+git clone --single-branch --branch kernel/ll-ndr-metadata-cores \
+  https://github.com/TangYunfei147/DeepEP-LL.git DeepEP-LL-shmem-ab && cd DeepEP-LL-shmem-ab
+```
+
+```bash
+BUNDLE=/absolute/path/metadata-shmem-ab.bundle
+BRANCH=kernel/ll-ndr-metadata-cores
+export NODE_RANK=0 MASTER_ADDR=192.0.2.1 COUNT_METHOD=scalar TAG=shmem-ab-s0-001
+
+sdk_run() {
+    git switch -C "$BRANCH" "$1" &&
+    python3 tests/ll_rdma/metadata_opt.py "$COUNT_METHOD" "$NODE_RANK" "$MASTER_ADDR" "$2" \
+      --mode perf --num-nodes 2 --tokens 1 8 32 256 --capacity 256 --hidden 3584 \
+      --topk 8 --experts 384 --dtype fp8 --route normal --seed 0 --rebuild-shmem
+}
+
+if git bundle verify "$BUNDLE" &&
+   git fetch "$BUNDLE" "refs/heads/$BRANCH:refs/remotes/sdk-ab/rollback" &&
+   B=$(git rev-parse refs/remotes/sdk-ab/rollback) &&
+   A=$(git rev-parse "$B^") &&
+   sdk_run "$A" "${TAG}-4c671684" &&
+   mkdir ".cache/${TAG}-first-sdk" &&
+   mv -- third-party/shmem/build third-party/shmem/install ".cache/${TAG}-first-sdk/" &&
+   sdk_run "$B" "${TAG}-8e3fc610"; then
+    echo "Both full-wheel OFF runs passed"
+else
+    echo "Stop here and keep this terminal, logs and results"
+fi
+```
+
+A 完成并退出后在新实验 clone 内保存其生成的 build/install，使 B 从空的 SDK 编译和安装目录开始。
+两轮均由 one_click 限定初始化 third-party/shmem，重建全 rank wheel。每轮在目标机核验正确性并采
+dispatch 和 BF16 combine。可用另一新 clone、新 TAG 反序复测以检查顺序效应。
+
+在节点 0 的 B 版本汇总，完整采样留在目标机。
+
+```bash
+python3 tests/ll_rdma/metadata_report.py --shmem-ab \
+  "${TAG}-4c671684-perf" "${TAG}-8e3fc610-perf" \
+  --output "results/${TAG}-return_report.md"
+```
+
+只有显式的 `--shmem-ab` 模式接受这一对 SDK。该模式核验 Git 树、每版 gitlink 和锁、
+采样时源码清洁状态、节点 0 SDK 编译配置（含 CANN 时间戳和 PI）、LL 配置及路由 hash。
+普通版本对照仍要求相同 SDK。回传一个不超过 60000 UTF-8 字节的报告。
+
+## SHMEM 官方 master 修复更新历史（2026-10-30）
 
 本次仅更新用户指定的两个分支：`kernel/ll-ndr-metadata-cores`、`kernel/ll-ndr-ab-per-core-qp`。
 二者统一从`8e3fc610f91ae9e5e8cf13748cfb74826b272c2a`更新到实时核实的官方master：

@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 import pytest
 
@@ -53,3 +54,40 @@ def test_size_limit_and_incomplete_run(tmp_path):
     data["status"] = "completed"; data["results"][0]["comparison"]["routing"] = "中" * 20000
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="60000"): reporter.render(tmp_path, ["a-perf"])
+
+
+def test_explicit_shmem_ab_checks_both_pins_code_build_and_sampling(tmp_path):
+    def git(*args):
+        return subprocess.check_output(["git", "-c", "user.name=fixture", "-c", "user.email=test@example.invalid",
+                                        *args], cwd=tmp_path, text=True).strip()
+    git("init", "-q")
+    commits = {}
+    for name, revision in zip(("a", "b"), sorted(reporter.SHMEM_PAIR)):
+        (tmp_path/"dependencies.lock.json").write_text(json.dumps({"shmem": {"revision": revision}}))
+        git("add", "dependencies.lock.json")
+        git("update-index", "--add", "--cacheinfo", f"160000,{revision},third-party/shmem")
+        git("commit", "-qm", name)
+        commits[revision] = sha = git("rev-parse", "HEAD")
+        path, ids = save(tmp_path, name, sha)
+        data = json.loads(path.read_text())
+        data["results"][0]["comparison"]["source_dirty"] = "False"
+        path.write_text(json.dumps(data))
+        identity = json.loads(ids.read_text())
+        identity.update(sdk_revision=revision, sdk_build={"source_patches": [], "hns_1825_pi_on_chip": 1})
+        ids.write_text(json.dumps(identity))
+    with pytest.raises(ValueError, match="SDK identity differs"):
+        reporter.render(tmp_path, ["a", "b"])
+    report = reporter.render(tmp_path, ["a", "b"], shmem_ab=True)
+    assert all(rev in report for rev in commits)
+    with pytest.raises(ValueError, match="both pinned"):
+        reporter.render(tmp_path, ["a"], shmem_ab=True)
+    identity["sdk_build"]["hns_1825_pi_on_chip"] = 0
+    ids.write_text(json.dumps(identity))
+    with pytest.raises(ValueError, match="build settings"):
+        reporter.render(tmp_path, ["a", "b"], shmem_ab=True)
+    (tmp_path/"kernel.cpp").write_text("changed")
+    git("add", "kernel.cpp")
+    git("commit", "-qm", "also change kernel")
+    commits[revision] = git("rev-parse", "HEAD")
+    with pytest.raises(ValueError, match="trees differing only"):
+        reporter.check_shmem_pair(tmp_path, commits)
