@@ -84,6 +84,12 @@ def run_id(a):
     return f"{a.run_name}-{a.mode}"
 
 
+def ll_jit_enabled(environment=None):
+    """Same OFF/ON/1/0 spelling as the build switches in build_support."""
+    env = os.environ if environment is None else environment
+    return env.get("DEEPEP_LL_JIT", "OFF").upper() in {"ON", "1", "TRUE"}
+
+
 def test_arguments(a):
     result = ["--backend", "rdma", "--devices", a.devices,
               "--num-processes", "16", "--num-nodes", str(a.num_nodes), "--node-rank", str(a.node_rank),
@@ -105,8 +111,13 @@ def test_arguments(a):
 def command_plan(a, python):
     commands = []
     if not a.skip_build:
-        commands += [["git", "submodule", "update", "--init", "--recursive", "--depth", "1", "--", "third-party/shmem"],
-                     [str(python), "scripts/build_shmem.py", *(["--rebuild"] if a.rebuild_shmem else [])],
+        commands += [["git", "submodule", "update", "--init", "--recursive", "--depth", "1", "--", "third-party/shmem"]]
+        if ll_jit_enabled():
+            # DeepJIT compiles the dispatch entry on the first call, so its
+            # headers must be present. The pinned commit is not a branch tip,
+            # so do not shallow-fetch this submodule.
+            commands += [["git", "submodule", "update", "--init", "--recursive", "--", "third-party/deep_jit"]]
+        commands += [[str(python), "scripts/build_shmem.py", *(["--rebuild"] if a.rebuild_shmem else [])],
                      [str(python), "-m", "pip", "install", "-r", "requirements-build.txt"],
                      [str(python), "-m", "pip", "install", "-v", "--force-reinstall", "--no-build-isolation", "--no-deps", "."]]
     commands += [[str(python), "scripts/record_shmem_sdk.py", "--check", "--sdk", "third-party/shmem/install/shmem"],
@@ -200,6 +211,13 @@ def installed_identity(a):
             raise RuntimeError('Installed reference-profile schema differs from this NDR branch')
         if info.get('ll_stage_timer') is not False:
             raise RuntimeError('Reference-profile wheel must compile legacy stage tracing OFF')
+    # The JIT and Ahead-of-Time wheels carry the same sources, so only this
+    # marker distinguishes them; never mix the two on one domain.
+    jit = ll_jit_enabled()
+    if bool(info.get('ll_jit', False)) != jit:
+        raise RuntimeError(
+            f"Installed wheel was built with DEEPEP_LL_JIT={'ON' if info.get('ll_jit') else 'OFF'}; "
+            f"rebuild it with DEEPEP_LL_JIT={'ON' if jit else 'OFF'}")
     world = 16 * a.num_nodes
     if (native.low_latency_ranks_per_group(world) != (4 if world <= 16 else 16)
             or native.low_latency_stage_timer_layout()["schema"] != 3):
@@ -216,7 +234,7 @@ def installed_identity(a):
             "source_sha256": fingerprint, "sdk_revision": lock["revision"], "sdk_build": sdk["build"],
             "core_protocol": expected_protocol, "count_histogram": histogram,
             "roce_qps_per_peer": native.low_latency_core_config()["active_aiv"], "timer_schema": 3, "reference_profile": reference,
-            "reference_profile_schema": 4 if reference else None, "mode": a.mode, "arguments": shared_args}
+            "reference_profile_schema": 4 if reference else None, "ll_jit": jit, "mode": a.mode, "arguments": shared_args}
 
 
 def peer_identity(identity):

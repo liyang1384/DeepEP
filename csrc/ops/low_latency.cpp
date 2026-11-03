@@ -13,6 +13,7 @@
 #include "../kernels/dispatch/low_latency/common/ll_reference_profile_layout.h"
 #include "../kernels/dispatch/low_latency/common/ll_expert_timer_layout.h"
 #include "../kernels/dispatch/low_latency/common/ll_dispatch_variant.h"
+#include "../runtime/ll_jit.hpp"
 #include "host/mem/shmem_host_heap.h"
 #include "host/data_plane/shmem_host_rma.h"
 #include "host/data_plane/shmem_host_p2p_sync.h"
@@ -351,7 +352,11 @@ void bind_low_latency(py::module_& module)
         session.workspace();  // Validate the owning context before launch.
         py::gil_scoped_release release;
         session.invalidate_dispatch_controls();
+#ifdef DEEPEP_LL_JIT
+        deepep::ll_jit_launch(reinterpret_cast<void*>(stream_address), args);
+#else
         dispatch_server_dedup_kernel_do(reinterpret_cast<void*>(stream_address), &args);
+#endif
     });
     module.def("clear_low_latency_combine_windows", [](Session& session, int b, int h, int k, int e,
                                                        uintptr_t stream_address) {

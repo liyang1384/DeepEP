@@ -5,3 +5,6 @@
 	path = third-party/shmem
 	url = https://gitcode.com/cann/shmem.git
 	branch = master
+[submodule "third-party/deep_jit"]
+	path = third-party/deep_jit
+	url = https://github.com/deepseek-ai/DeepJIT.git

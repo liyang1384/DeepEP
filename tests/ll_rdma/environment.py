@@ -18,5 +18,11 @@ def environment():
         path = ROOT / relative
         path.mkdir(parents=True, exist_ok=True)
         env[key] = str(path)
+    # JIT kernels and scratch stay in the project like every other cache, but an
+    # explicit shared root (multi-rank/multi-node reuse) is never overridden.
+    if "DEEPEP_JIT_CACHE_DIR" not in env:
+        path = ROOT / ".cache/jit"
+        path.mkdir(parents=True, exist_ok=True)
+        env["DEEPEP_JIT_CACHE_DIR"] = str(path)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env

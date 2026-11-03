@@ -25,9 +25,7 @@ def test_no_legacy_device_tracers_or_transport_timer_parameters():
 
 def test_all_profile_words_have_searchable_annotations_and_documented_formulas():
     seen = set()
-    # The single entry translation unit owns w0/w1; every other word stays in LL headers.
-    sources = [*LL.rglob('*.h'), ROOT / 'csrc/kernels/dispatch/low_latency.cpp']
-    for path in sources:
+    for path in LL.rglob('*.h'):
         source = path.read_text(encoding='utf-8')
         for line in source.splitlines():
             match = re.search(r'(?:Mark|Value)<(\d+)>\(', line)

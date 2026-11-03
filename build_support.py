@@ -261,8 +261,19 @@ def build_configuration(environment=None):
     result["ll_stage_timer"] = enabled("DEEPEP_LL_STAGE_TIMER", env)
     result["ll_reference_profile"] = enabled("DEEPEP_LL_REFERENCE_PROFILE", env)
     result["ll_count_histogram"] = enabled("DEEPEP_LL_COUNT_HISTOGRAM", env)
+    result["ll_jit"] = enabled("DEEPEP_LL_JIT", env)
     if result["ll_stage_timer"] and result["ll_reference_profile"]:
         raise RuntimeError("DEEPEP_LL_REFERENCE_PROFILE and DEEPEP_LL_STAGE_TIMER are mutually exclusive")
+    if result["ll_jit"]:
+        # DeepJIT loads kernels through torch_npu stream types, so the Host
+        # module compiles and links against that SDK when JIT is selected.
+        try:
+            import torch
+            import torch_npu
+        except ImportError as exc:
+            raise RuntimeError("DEEPEP_LL_JIT requires torch and torch_npu in the build environment") from exc
+        result["TORCH_NPU_PATH"] = str(Path(torch_npu.__file__).parent.resolve())
+        result["Torch_DIR"] = str(Path(torch.__file__).parent / "share/cmake/Torch")
     result["ll_rdma"] = ndr_rdma_enabled(env)
     result["build_type"] = env.get("DEEPEP_BUILD_TYPE", "RelWithDebInfo" if lineinfo else "Release")
     if result["build_type"] not in {"Release", "RelWithDebInfo", "Debug"}:
@@ -472,6 +483,7 @@ class CMakeBuild(build_ext):
             f"-DDEEPEP_LL_STAGE_TIMER={'ON' if configuration.get('ll_stage_timer', False) else 'OFF'}",
             f"-DDEEPEP_LL_REFERENCE_PROFILE={'ON' if configuration.get('ll_reference_profile', False) else 'OFF'}",
             f"-DDEEPEP_LL_COUNT_HISTOGRAM={'ON' if configuration.get('ll_count_histogram', False) else 'OFF'}",
+            f"-DDEEPEP_LL_JIT={'ON' if configuration.get('ll_jit', False) else 'OFF'}",
             f"-DPython_EXECUTABLE={sys.executable}",
             f"-Dpybind11_DIR={pybind11.get_cmake_dir()}",
             f"-DCMAKE_CXX_COMPILER={configuration['compiler_path']}",
@@ -491,6 +503,13 @@ class CMakeBuild(build_ext):
                     *(f"-D{name}={value}" for name, value in configuration["ep_gmm_fused_paths"].items()),
                 ]
             )
+        if configuration.get("ll_jit", False):
+            arguments.extend(
+                [
+                    f"-DTORCH_NPU_PATH={configuration['TORCH_NPU_PATH']}",
+                    f"-DTorch_DIR={configuration['Torch_DIR']}",
+                ]
+            )
         configure_skipped = configuration_matches(directory, arguments)
         stamp = directory / ".deepep-configure.json"
         # A failed configure/build must not leave an apparently valid new stamp.
@@ -505,6 +524,12 @@ class CMakeBuild(build_ext):
         phase = time.perf_counter()
         checked_run([cmake, "--install", directory])
         seconds["install"] = time.perf_counter() - phase
+        if configuration.get("ll_jit", False):
+            # DeepJIT compiles the dispatch entry on first launch, so the installed
+            # package carries the same device headers this build was configured from.
+            kernel_src = destination / "_kernel_src"
+            shutil.rmtree(kernel_src, ignore_errors=True)
+            shutil.copytree(ROOT / "csrc", kernel_src / "csrc")
         identity = configure_identity(directory, arguments)
         if identity is not None:
             stamp.write_text(json.dumps(identity, indent=2) + "\n", encoding="utf-8")
@@ -528,6 +553,8 @@ class CMakeBuild(build_ext):
                 "cmake_path",
                 "python_executable",
                 "build_environment",
+                "TORCH_NPU_PATH",
+                "Torch_DIR",
             }
         }
         info["compiler"] = json.loads((directory / "compiler-info.json").read_text())

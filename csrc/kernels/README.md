@@ -7,7 +7,7 @@ Modified by Joyce_An 2026
 
 - `notify/notify.cpp`：路由元数据计算与交换。
 - `dispatch/dispatch.cpp`、`combine/combine.cpp`：高吞吐 dispatch/combine。
-- `dispatch/low_latency.cpp`、`combine/low_latency.cpp`：低时延入口。
+- `dispatch/low_latency/dispatch_entry.h`、`combine/low_latency.cpp`：低时延入口；`dispatch/low_latency.cpp` 只是前者可复用的 AOT 编译单元（`DEEPEP_LL_JIT=ON` 时改由 `csrc/runtime/ll_jit.cpp` 在运行期编译同一入口）。
 - `dispatch/low_latency/`、`combine/low_latency/`：低时延设备实现、Host/Device 共用布局和启动声明。
 - `launch.hpp`：LL 的导出和启动宏；`common.hpp`：Notify/combine 的 rank 调度映射。
 

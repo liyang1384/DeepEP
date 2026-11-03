@@ -134,6 +134,35 @@ wheel 中 `_C.so` 和 `libdeepep_kernels.so` 放在同一目录，通过 `$ORIGI
 CPU 构建预检和打包回归位于 `tests/runtime/test_build.py`，检查配置、缓存键、构建命令与产物要求；
 这些测试不执行真实 Bisheng 编译，也不替代 Device 增量构建和设备验收。
 
+## 运行期 JIT（仅 LL dispatch）
+
+`DEEPEP_LL_JIT=ON` 时，LL dispatch 入口不再编入 `libdeepep_kernels.so`，改由 Host 首次调用时用
+DeepJIT 现场编译；combine 仍走 Ahead-of-Time。两条路径编译同一个
+`csrc/kernels/dispatch/low_latency/dispatch_entry.h`，通信协议、tiling 与 ABI 不变。
+
+- 构建期需要 `torch`/`torch_npu`（DeepJIT 的 Ascend kernel 句柄使用 torch_npu 的 stream 类型），
+  Host 模块会链接 `torch_npu`；wheel 额外携带 `deep_ep/_kernel_src/csrc` 供运行期编译使用。
+- 运行期仍需 `ASCEND_HOME_PATH`（含 Bisheng）与 SHMEM SDK 头文件。SDK 根在构建期记录；
+  部署位置变化时用 `DEEPEP_LL_JIT_SHMEM_ROOT` 指向提供 `lib/libshmem.so` 的安装目录。
+- 首次调用交给 DeepJIT 的源码只有一行 `#include <kernels/dispatch/low_latency/dispatch_entry.h>`：
+  DeepJIT 的 include 解析器拒绝引号形式的 include，而入口以下的头文件继续使用与 AOT 相同的
+  相对引号 include。入口文本只有一行，所以 kernel 与 SHMEM 头文件树的内容哈希被折进缓存签名，
+  改任何头文件仍会使磁盘缓存失效。
+- 编译缓存与 toolkit 兼容目录共用同一个根：默认 `$HOME/.dj`，
+  用 `DEEPEP_JIT_CACHE_DIR` 改到共享目录（`:` 分隔，第一项可写、其余只读回退），
+  多 rank 首次调用只需一次真实编译。
+- 其它可调项：`DEEPEP_LL_JIT_SIGNATURE`（追加进缓存键）、`DEEPEP_LL_JIT_DEFINES`
+  （`;` 分隔的额外 `-D`）、`DEEPEP_LL_JIT_INCLUDE_DIRS`（`:` 分隔的额外 `-I`）、
+  `DEEPEP_LL_JIT_SHMEM_ROOT`（SHMEM 头文件根，见上）。
+- 兼容性：CANN 把 `bisheng` 放在 `tools/bisheng_compiler/bin` 时，运行期会在
+  `DEEPEP_JIT_CACHE_DIR` 的 `toolkit/` 下建立 `bin/bisheng`、`bin/ld.lld` 与
+  `asc/include/adv_api` 符号链接。DeepJIT 固定探测 `aarch64-linux/asc/include/adv_api`
+  这个名字，兼容根同时提供宿主架构（如 `x86_64-linux`）与 `aarch64-linux` 两套目录，
+  因此 x86_64 主机也能运行期编译，其余头文件路径按 `uname -m` 选择。
+
+两种模式的 kernel 名同为 `dispatch_server_dedup_kernel`，profiler 与既有诊断脚本无需区分。
+JIT 的冷/热编译、多 rank 并发首编与精度/性能对比需在真机验证，CPU 测试不覆盖该路径。
+
 ## 自动化构建、隔离安装与验证
 
 在已准备好匹配 torch/torch_npu、pytest 与构建依赖的环境中运行：

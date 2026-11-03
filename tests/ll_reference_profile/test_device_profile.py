@@ -158,7 +158,7 @@ def read(relative):
 
 
 def test_reference_points_preserve_business_boundaries_and_async_tail():
-    entry = (ROOT / 'csrc/kernels/dispatch/low_latency.cpp').read_text(encoding='utf-8')
+    entry = read('dispatch_entry.h')
     assert entry.index('DeviceProfile::EntryClock') < entry.index('util_set_ffts_config')
     assert entry.index('kernel.Process();') < entry.index('profile.Finish(')
     kernel = read('dispatch_server_dedup_kernel.h')

@@ -65,7 +65,8 @@ def test_run_name_cannot_escape_project(name):
         launch.parse_args(["0", "192.0.2.1", name])
 
 
-def test_rebuild_is_explicit_and_skip_build_is_read_only():
+def test_rebuild_is_explicit_and_skip_build_is_read_only(monkeypatch):
+    monkeypatch.delenv("DEEPEP_LL_JIT", raising=False)
     a = launch.parse_args(["0", "192.0.2.1", "x"])
     commands = launch.command_plan(a, "/project with spaces/.venv/bin/python")
     assert commands[1][1:] == ["scripts/build_shmem.py"]
@@ -75,6 +76,20 @@ def test_rebuild_is_explicit_and_skip_build_is_read_only():
     a.skip_build = True
     commands = launch.command_plan(a, "python")
     assert len(commands) == 2 and all("pip" not in command and "git" not in command for command in commands)
+
+
+def test_deep_jit_wheel_initializes_its_own_submodule(monkeypatch):
+    a = launch.parse_args(["0", "192.0.2.1", "jit"])
+    monkeypatch.delenv("DEEPEP_LL_JIT", raising=False)
+    commands = launch.command_plan(a, "python")
+    assert commands[1][1:] == ["scripts/build_shmem.py"]
+    assert not any("third-party/deep_jit" in command for command in commands)
+    monkeypatch.setenv("DEEPEP_LL_JIT", "ON")
+    commands = launch.command_plan(a, "python")
+    assert commands[1][1:] == ["submodule", "update", "--init", "--recursive", "--", "third-party/deep_jit"]
+    assert commands[2][1:] == ["scripts/build_shmem.py"]
+    a.skip_build = True
+    assert not any("deep_jit" in command for command in launch.command_plan(a, "python"))
 
 
 def test_paths_resolve_from_project_not_working_directory(tmp_path, monkeypatch):
@@ -160,9 +175,10 @@ def test_bad_shape_rejected_before_any_preparation(tokens, monkeypatch):
 @pytest.mark.parametrize("mode", ["perf", "reference"])
 @pytest.mark.parametrize("nodes", [1, 2, 4, 8, 16])
 @pytest.mark.parametrize("histogram", [False, True])
-@pytest.mark.parametrize("fault", [None, "timer", "source", "sdk", "firmware", "library", "branch", "protocol", "qps", "reference", "reference_metadata", "group", "histogram"])
+@pytest.mark.parametrize("fault", [None, "timer", "source", "sdk", "firmware", "library", "branch", "protocol", "qps", "reference", "reference_metadata", "group", "histogram", "jit"])
 def test_installed_check_rejects_stale_or_mixed_builds(tmp_path, monkeypatch, mode, nodes, histogram, fault):
     monkeypatch.setenv('DEEPEP_LL_COUNT_HISTOGRAM', 'ON' if histogram else 'OFF')
+    monkeypatch.delenv("DEEPEP_LL_JIT", raising=False)
     root = tmp_path / "project"
     root.mkdir()
     (root / "dependencies.lock.json").write_text('{"shmem":{"revision":"sdk"}}')
@@ -173,6 +189,7 @@ def test_installed_check_rejects_stale_or_mixed_builds(tmp_path, monkeypatch, mo
             "ll_stage_timer": mode == "timer", "ll_reference_profile": (mode == "reference") != (fault == "reference_metadata")}
     if fault == "source": info["source_sha256"] = "old"
     info['ll_count_histogram'] = histogram != (fault == 'histogram')
+    info["ll_jit"] = fault == "jit"
     if fault == "sdk": info["shmem"]["revision"] = "old"
     if fault == "firmware": info["shmem"]["build"]["hns_1825_pi_on_chip"] = 1
     (package / "_build_info.json").write_text(json.dumps(info))
@@ -202,6 +219,7 @@ def test_installed_check_rejects_stale_or_mixed_builds(tmp_path, monkeypatch, mo
         identity = launch.installed_identity(a)
         assert identity["project_root"] == str(root)
         assert identity["sdk_build"] == sdk["build"]
+        assert identity["ll_jit"] is False
         assert identity["arguments"][identity["arguments"].index("--node-rank") + 1] == "<node>"
 
 

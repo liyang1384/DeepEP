@@ -30,10 +30,16 @@ find_path(DEVICE_RT_INCLUDE rt.h HINTS
 # This NDR performance branch builds LL only. Keep plain and reference objects
 # separate so profiling switches reuse dependency-tracked objects.
 set(_ll_sources
-    "${DEEPEP_SOURCE_DIR}/csrc/kernels/dispatch/low_latency.cpp"
     "${DEEPEP_SOURCE_DIR}/csrc/kernels/combine/low_latency.cpp")
 # One LL dispatch translation unit, as on main: the entry kernel selects the
-# input element class and group size at runtime from the tiling.
+# input element class and group size at runtime from the tiling. With
+# DEEPEP_LL_JIT that unit is compiled at run time instead, so only combine stays
+# in the Ahead-of-Time device library.
+if(NOT DEEPEP_LL_JIT)
+    set(_ll_sources
+        "${DEEPEP_SOURCE_DIR}/csrc/kernels/dispatch/low_latency.cpp"
+        "${DEEPEP_SOURCE_DIR}/csrc/kernels/combine/low_latency.cpp")
+endif()
 add_library(deepep_kernel_ll_plain OBJECT ${_ll_sources})
 add_library(deepep_kernel_ll_reference OBJECT ${_ll_sources})
 set_target_properties(deepep_kernel_ll_plain deepep_kernel_ll_reference PROPERTIES EXCLUDE_FROM_ALL TRUE)

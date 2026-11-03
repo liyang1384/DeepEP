@@ -116,20 +116,21 @@ def test_child_configuration_failure_stops_parent(project):
     assert "Device CMake configuration failed" in result.stderr
 
 
-def test_stage_timer_definition_is_scoped_to_ll_sources():
+def test_ll_sources_and_profile_definition_stay_scoped():
     text = (ROOT / "cmake/device/CMakeLists.txt").read_text()
-    block = text.split("set(_ll_sources", 1)[1].split(")", 1)[0]
+    block = text.split("set(_ll_sources", 1)[1].split("add_library(deepep_kernel_ll_plain", 1)[0]
     assert '"${DEEPEP_SOURCE_DIR}/csrc/kernels/dispatch/low_latency.cpp"' in block
     assert '"${DEEPEP_SOURCE_DIR}/csrc/kernels/combine/low_latency.cpp"' in block
-    assert "target_compile_definitions(deepep_kernel_ll_timer PRIVATE DEEPEP_LL_STAGE_TIMER=1)" in text
-    assert "target_compile_definitions(deepep_kernels PRIVATE DEEPEP_LL_STAGE_TIMER" not in text
+    assert "target_compile_definitions(deepep_kernel_ll_reference PRIVATE DEEPEP_LL_REFERENCE_PROFILE=1)" in text
+    assert "target_compile_definitions(deepep_kernels PRIVATE DEEPEP_LL_REFERENCE_PROFILE" not in text
 
 
 def test_ndr_build_excludes_ht_bindings_and_declares_ll_only():
     import json
     parent = (ROOT / "CMakeLists.txt").read_text()
     sources = parent.split("pybind11_add_module(_C ", 1)[1].split(")", 1)[0].split()
-    assert sources == ["csrc/bindings/module.cpp", "csrc/runtime/session.cpp", "csrc/ops/low_latency.cpp"]
+    assert sources == ["csrc/bindings/module.cpp", "csrc/runtime/session.cpp", "csrc/ops/low_latency.cpp",
+                       "csrc/ops/ll_capabilities.cpp"]
     device = (ROOT / "cmake/device/CMakeLists.txt").read_text()
     assert "deepep_kernel_common" not in device
     capabilities = json.loads(parent.split('capabilities.json" CONTENT [=[', 1)[1].split(']=]', 1)[0])

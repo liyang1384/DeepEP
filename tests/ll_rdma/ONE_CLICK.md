@@ -133,3 +133,11 @@ bash tests/ll_rdma/one_click.sh 0 192.0.2.10 ndr-plan --plan
 
 本地验证仅覆盖CPU计划、调用顺序、失败停止、身份拒绝及TCP准备握手。
 不代表目标CANN编译、RDMA可达性、NPU正确性或性能已通过。
+
+## 运行期 JIT（可选）
+
+各节点在构建前设置相同的 `DEEPEP_LL_JIT=ON`，dispatch 入口改为首次调用时由 DeepJIT 编译，combine 仍为 AOT。
+命令、参数和结果目录都不变；脚本会额外初始化 `third-party/deep_jit` 子模块。
+身份校验会拒绝 JIT/AOT 混装，以及 `--skip-build` 时开关与已装 wheel 不一致。
+编译缓存与预处理临时文件默认在工程内 `.cache/jit`，需要跨机复用时把 `DEEPEP_JIT_CACHE_DIR`
+指向共享目录（显式值不会被覆盖）。首次调用前的编译不进入 profiler 采样，但会拉长首跑时间。

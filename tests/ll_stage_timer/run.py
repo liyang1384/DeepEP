@@ -19,6 +19,9 @@ def environment(devices):
            'ASCEND_PROCESS_LOG_PATH':'.logs/ascend','SHMEM_LOG_PATH':'.logs/shmem'}
     for key,relative in paths.items():
         path=ROOT/relative;path.mkdir(parents=True,exist_ok=True);env[key]=str(path)
+    # Keep JIT kernels and scratch in-project unless a shared root is provided.
+    if 'DEEPEP_JIT_CACHE_DIR' not in env:
+        path=ROOT/'.cache/jit';path.mkdir(parents=True,exist_ok=True);env['DEEPEP_JIT_CACHE_DIR']=str(path)
     env.update({key:devices for key in VISIBILITY});env['PYTHONDONTWRITEBYTECODE']='1'
     libraries=[str(ROOT/'third-party/shmem/install/shmem/lib')]
     if env.get('DEEPEP_RDMA_PROVIDER_PATH'):

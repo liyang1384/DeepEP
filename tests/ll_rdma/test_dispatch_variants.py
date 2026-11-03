@@ -83,7 +83,7 @@ int main() {
 
 def test_single_dispatch_entry_replaces_variants():
     """The branch keeps main's single entry and one device translation unit."""
-    entry = (ROOT / "csrc/kernels/dispatch/low_latency.cpp").read_text(encoding="utf-8")
+    entry = (ROOT / "csrc/kernels/dispatch/low_latency/dispatch_entry.h").read_text(encoding="utf-8")
     assert entry.count("__global__ __aicore__ void dispatch_server_dedup_kernel(") == 1
     assert "extern \"C\" DEEPEP_EXPORT void dispatch_server_dedup_kernel_do(" in entry
     assert "_do_v2" not in entry
@@ -91,8 +91,37 @@ def test_single_dispatch_entry_replaces_variants():
     assert "DISPATCH_SERVER_DEDUP_RUN(half, 16U)" in entry
     assert "DISPATCH_SERVER_DEDUP_RUN(bfloat16_t, 4U)" in entry
     assert "DISPATCH_SERVER_DEDUP_RUN(bfloat16_t, 16U)" in entry
+    unit = (ROOT / "csrc/kernels/dispatch/low_latency.cpp").read_text(encoding="utf-8")
+    assert '#include "low_latency/dispatch_entry.h"' in unit
+    assert "__global__" not in unit
+    capabilities = (ROOT / "csrc/ops/ll_capabilities.cpp").read_text(encoding="utf-8")
+    assert "deepep_ll_core_protocol_version" in capabilities
+    assert "deepep_ll_core_protocol_version" not in unit
     assert not (ROOT / "csrc/kernels/dispatch/low_latency/variants").exists()
     assert not (ROOT / "csrc/kernels/dispatch/low_latency/dispatch_variant_kernel.h").exists()
+
+
+def test_jit_build_reuses_the_single_dispatch_entry():
+    """The JIT path differs only in launch; the entry source stays shared."""
+    entry = (ROOT / "csrc/kernels/dispatch/low_latency/dispatch_entry.h").read_text(encoding="utf-8")
+    kernel, launch = entry.split("#ifndef DEEPEP_LL_JIT", 1)
+    assert "__global__ __aicore__ void dispatch_server_dedup_kernel(" in kernel
+    assert "DISPATCH_SERVER_DEDUP_RUN(bfloat16_t, 16U)" in kernel
+    assert "dispatch_server_dedup_kernel_do" in launch
+    host = (ROOT / "csrc/ops/low_latency.cpp").read_text(encoding="utf-8")
+    assert "#ifdef DEEPEP_LL_JIT" in host
+    assert "deepep::ll_jit_launch(reinterpret_cast<void*>(stream_address), args)" in host
+    device = (ROOT / "cmake/device/CMakeLists.txt").read_text(encoding="utf-8")
+    assert device.index("if(NOT DEEPEP_LL_JIT)") < device.index(
+        '"${DEEPEP_SOURCE_DIR}/csrc/kernels/dispatch/low_latency.cpp"')
+    assert "csrc/kernels/combine/low_latency.cpp" in device
+    jit = (ROOT / "csrc/runtime/ll_jit.cpp").read_text(encoding="utf-8")
+    assert "kernels/dispatch/low_latency/dispatch_entry.h" in jit
+    # DeepJIT's parser rejects quoted includes, so only the entry line uses an
+    # angle include and the header trees are hashed into the cache signature.
+    assert 'return "#include <" + std::string(kEntryHeader) + ">\\n";' in jit
+    assert "header_fingerprint()" in jit
+    assert 'jit.compile("ll_dispatch", entry_source(), overrides)' in jit
 
 
 def test_host_launch_uses_same_format_builder_as_tiling():

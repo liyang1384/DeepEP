@@ -175,3 +175,22 @@ def test_toolchain_changes_keep_cache_isolation(native):
     for key, value in (("compiler_sha256", "new host"), ("device_compiler_sha256", "new device"),
                        ("SHMEM_ROOT", "new sdk"), ("build_environment", {"CXXFLAGS": "-g"})):
         assert native.module.build_cache_key({**native.configuration, key: value}) != original
+
+
+def test_ll_jit_ships_device_headers_with_the_extension(native):
+    entry = native.module.ROOT / "csrc/kernels/dispatch/low_latency/dispatch_entry.h"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// device header\n")
+    native.configuration.update(
+        ll_jit=True,
+        TORCH_NPU_PATH=str(native.module.ROOT / "torch_npu"),
+        Torch_DIR=str(native.module.ROOT / "Torch"),
+    )
+    native.run()
+    assert "-DDEEPEP_LL_JIT=ON" in native.calls[0]
+    assert f"-DTORCH_NPU_PATH={native.configuration['TORCH_NPU_PATH']}" in native.calls[0]
+    destination = Path(native.command.get_ext_fullpath(native.ext.name)).parent
+    assert (destination / "_kernel_src/csrc/kernels/dispatch/low_latency/dispatch_entry.h").is_file()
+    info = json.loads((destination / "_build_info.json").read_text())
+    assert info["ll_jit"] is True
+    assert "TORCH_NPU_PATH" not in info
