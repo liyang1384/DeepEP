@@ -2,6 +2,7 @@
 #include "ll_transport.h"
 #include "ll_count_frame_transport.h"
 #include "../common/ll_reference_profile_device.h"
+#include "../common/ll_jit_spec.h"
 
 namespace LlTransport {
 // One staged-but-not-posted packet. Reuse the existing GM batch and output
@@ -55,7 +56,7 @@ public:
         if (!bytes || bytes % 512U || bytes > LlRdma::kCoreBytes) { Trap(); return; }
         const uint32_t slots = LlRdma::kCoreBytes / bytes_;
         capacity_ = slots; // use every complete packet slot in the 128KiB GM stage
-        if (uint32_t(args_->rankSize) > DispatchDedup::kLlPhysicalRanksPerHost)
+        if (DEEPEP_LL_LAUNCH_WORLD(args_) > DispatchDedup::kLlPhysicalRanksPerHost)
             stageBase_ = Stage(args_, capacity_ * bytes_);
     }
     __aicore__ inline bool Pending() const { return count_ != 0U; }

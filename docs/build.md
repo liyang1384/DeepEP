@@ -144,10 +144,20 @@ DeepJIT 现场编译；combine 仍走 Ahead-of-Time。两条路径编译同一�
   Host 模块会链接 `torch_npu`；wheel 额外携带 `deep_ep/_kernel_src/csrc` 供运行期编译使用。
 - 运行期仍需 `ASCEND_HOME_PATH`（含 Bisheng）与 SHMEM SDK 头文件。SDK 根在构建期记录；
   部署位置变化时用 `DEEPEP_LL_JIT_SHMEM_ROOT` 指向提供 `lib/libshmem.so` 的安装目录。
-- 首次调用交给 DeepJIT 的源码只有一行 `#include <kernels/dispatch/low_latency/dispatch_entry.h>`：
-  DeepJIT 的 include 解析器拒绝引号形式的 include，而入口以下的头文件继续使用与 AOT 相同的
-  相对引号 include。入口文本只有一行，所以 kernel 与 SHMEM 头文件树的内容哈希被折进缓存签名，
-  改任何头文件仍会使磁盘缓存失效。
+- 首次调用交给 DeepJIT 的源码是一小段宏定义加一行
+  `#include <kernels/dispatch/low_latency/dispatch_entry.h>`：宏把 B/H/K/E、输入模式、
+  E4M3 与 dedup 决策以编译期常量写进翻译单元，因此每个不同 case 各有一份 kernel，
+  缓存键也随之不同（磁盘目录名带 `b.._h.._k.._e.._n<cores>_w<world>..` 等字段；每 rank 容量只通过
+  dedup 位体现，容量不同但决策相同的两次调用共用同一份 kernel）。JIT 的 kernel 完全不读 tiling：
+  Host 不再为 dispatch 构建或上传 32B tiling（`native.low_latency_jit` 为真时 Python 跳过该步），
+  启动身份只来自缓存键。DeepJIT 的 include 解析器拒绝
+  引号形式的 include，而入口以下的头文件继续使用与 AOT 相同的相对引号 include；kernel 与
+  SHMEM 头文件树的内容哈希仍折进缓存签名，改任何头文件都会使全部 case 的磁盘缓存失效。
+- 形状静态化只作用于 JIT：AOT 的同一入口仍按 tiling 在“输入元素类 × group”的内联实例间选择，
+  tiling、ABI 与通信协议不变。JIT 下 tiling 的每个字段都是编译期常量（`expertTokenNumsType`
+  取协议常量 `kLlExpertTokenNumsType`，每 rank 容量只通过 dedup 位体现），world 与 active core
+  数也一并烘进 kernel（`common/ll_jit_spec.h` 的 `DEEPEP_LL_LAUNCH_WORLD/CORES`）。仍为运行期
+  值的只有 `CommArgs` 里的 rank、peer 映射、ffts 配置与 RDMA 能力。
 - 编译缓存与 toolkit 兼容目录共用同一个根：默认 `$HOME/.dj`，
   用 `DEEPEP_JIT_CACHE_DIR` 改到共享目录（`:` 分隔，第一项可写、其余只读回退），
   多 rank 首次调用只需一次真实编译。

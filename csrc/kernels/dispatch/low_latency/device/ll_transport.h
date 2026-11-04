@@ -1,6 +1,7 @@
 #pragma once
 #include "../common/ll_rdma_layout.h"
 #include "../common/ll_group_policy.h"
+#include "../common/ll_jit_spec.h"
 #include "kernel_operator.h"
 #ifdef DEEPEP_LL_RDMA
 #include "device/gm2gm/engine/shmem_device_rdma.h"
@@ -19,7 +20,7 @@ __aicore__ inline bool SameHost(const __gm__ Args* a, uint32_t peer) {
 }
 __aicore__ inline bool RemoteWrite(const __gm__ Args* a, uint32_t peer) { return Rdma(a) && !SameHost(a, peer); }
 __aicore__ inline void Check(const __gm__ Args* a, uint32_t peer, uint64_t offset, uint64_t bytes) {
-    if (peer >= uint32_t(a->rankSize) || offset > a->peerMemBytes || bytes > a->peerMemBytes - offset) Trap();
+    if (peer >= DEEPEP_LL_LAUNCH_WORLD(a) || offset > a->peerMemBytes || bytes > a->peerMemBytes - offset) Trap();
 }
 __aicore__ inline GM_ADDR RemoteAddress(const __gm__ Args* a, uint32_t peer, uint64_t offset) {
     return a->reservedAddresses[0] + uint64_t(peer) * 1024U + offset;
@@ -33,7 +34,9 @@ __aicore__ inline GlobalTensor<uint8_t> Tensor(GM_ADDR p, bool uncached=false) {
     return t;
 }
 __aicore__ inline GM_ADDR Stage(const __gm__ Args* a, uint32_t bytes) {
-    if (GetBlockNum() != a->reservedConfig[1] || GetBlockIdx() >= a->reservedConfig[1] || bytes > LlRdma::kCoreBytes) Trap();
+    // The launch core count is part of the JIT cache key and the AOT launch
+    // configuration, so it is no longer re-checked here.
+    if (GetBlockIdx() >= a->reservedConfig[1] || bytes > LlRdma::kCoreBytes) Trap();
     return a->reservedAddresses[1] + uint64_t(GetBlockIdx()) * LlRdma::kCoreBytes;
 }
 __aicore__ inline void Put(const __gm__ Args* a, uint32_t peer, GM_ADDR dst, GM_ADDR src,

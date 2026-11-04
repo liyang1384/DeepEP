@@ -13,9 +13,11 @@
 #endif
 #include "../common/ll_count_frame_layout.h"
 #include "../common/ll_count_assignment.h"
+#include "../common/ll_jit_spec.h"
 #include "../common/ll_reference_profile_device.h"
 #include "adv_api/reduce/sum.h"
 #include "../common/ep_memory_server_dedup_count_layout.h"
+#include "../common/ep_memory_server_dedup_tiling.h"
 
 namespace DispatchDedup {
 using namespace AscendC;
@@ -38,22 +40,29 @@ public:
         profile_ = profile;
         args_ = reinterpret_cast<const __gm__ DispatchDedup::CommArgs*>(commArgs);
         epRankId_ = args_->rank;
-        epWorldSize_ = args_->rankSize;
+        epWorldSize_ = DEEPEP_LL_LAUNCH_WORLD(args_);
         aivId_ = GetBlockIdx();
-        coreNum_ = GetBlockNum();
+        coreNum_ = DEEPEP_LL_LAUNCH_CORES();
         aivUsedAllToAll_ = aivUsedCumSum_ = coreNum_ / 2U;
+#ifndef DEEPEP_LL_JIT_SPECIALIZED
         axisBS_ = bs;
         axisK_ = topK;
         expertIdsCnt_ = bs * topK;
         rscvStatusNum_ = experts;
-        moeExpertNumPerRank_ = experts / epWorldSize_;
-        expertTokenNumsType_ = expertTokenNumsType;
         useAllCoreCount_ = bs < kEpServerDedupAllCoreCountBsThreshold;
+        expertTokenNumsType_ = expertTokenNumsType;
+#else
+        (void)bs;
+        (void)topK;
+        (void)experts;
+        (void)expertTokenNumsType;
+#endif
+        moeExpertNumPerRank_ = rscvStatusNum_ / epWorldSize_;
         packedFrames_ = LlTransport::Rdma(args_) && epWorldSize_ > 16U;
         directRanks_ = LlTransport::Rdma(args_) && epWorldSize_ > kLlPhysicalRanksPerHost;
         countWindow_ = DispatchServerDedupWindowOffset(magic);
         retirement_.Init(args_);
-        layout_ = DispatchServerDedupCountLayout(experts, coreNum_);
+        layout_ = DispatchServerDedupCountLayout(rscvStatusNum_, coreNum_);
         stateOffset_ = DispatchServerDedupWindowOffset(magic) + layout_.cntOffset;
         GM_ADDR localState = args_->peerMems[epRankId_] + stateOffset_;
         windowInstatusFp32Tensor_.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(localState));
@@ -160,12 +169,25 @@ private:
     uint64_t stateOffset_ = 0;
     int64_t originalOverflowMode_ = 0;
     uint32_t epRankId_ = 0, epWorldSize_ = 0, aivId_ = 0;
+#ifdef DEEPEP_LL_JIT_SPECIALIZED
+    // Baked into the JIT translation unit; see dispatch_entry.h.
+    static constexpr uint32_t axisBS_ = DEEPEP_LL_JIT_SPEC_BS;
+    static constexpr uint32_t axisK_ = DEEPEP_LL_JIT_SPEC_TOPK;
+    static constexpr uint32_t expertIdsCnt_ = DEEPEP_LL_JIT_SPEC_BS * DEEPEP_LL_JIT_SPEC_TOPK;
+    static constexpr uint32_t rscvStatusNum_ = DEEPEP_LL_JIT_SPEC_EXPERTS;
+    static constexpr bool useAllCoreCount_ = DEEPEP_LL_JIT_SPEC_BS < kEpServerDedupAllCoreCountBsThreshold;
+    // Protocol constant: the Host tiling builder never writes another value.
+    static constexpr uint32_t expertTokenNumsType_ = kLlExpertTokenNumsType;
+#else
     uint32_t axisBS_ = 0, axisK_ = 0, expertIdsCnt_ = 0;
-    uint32_t rscvStatusNum_ = 0, moeExpertNumPerRank_ = 0, expertTokenNumsType_ = 0;
+    uint32_t rscvStatusNum_ = 0;
+    bool useAllCoreCount_ = false;
+    uint32_t expertTokenNumsType_ = 0;
+#endif
+    uint32_t moeExpertNumPerRank_ = 0;
     uint32_t statusCntAlign_ = 0;
     uint32_t startStatusIndex_ = 0, endStatusIndex_ = 0, recStatusNumPerCore_ = 0;
     uint32_t activeCumSumCores_ = 0;
-    bool useAllCoreCount_ = false;
     bool packedFrames_ = false;
     bool directRanks_ = false;
     uint64_t countWindow_ = 0U;

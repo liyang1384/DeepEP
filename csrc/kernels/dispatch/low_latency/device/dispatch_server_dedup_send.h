@@ -12,6 +12,7 @@
 #include "ll_transport.h"
 #include "ll_dispatch_rdma_batch.h"
 #include "dispatch_dedup_mxfp8_quant.h"
+#include "../common/ll_jit_spec.h"
 #include "../common/ep_memory_server_dedup_data_layout.h"
 #include "../common/ep_memory_server_dedup_protocol.h"
 #include "../common/ll_send_order.h"
@@ -25,8 +26,9 @@ using namespace AscendC;
 
 // R02-01/R05-04 source path: first hops precede the cached DIRECT tasks on
 // each core, sharing one packet sequence and ring of in-flight send buffers.
-// Only the input element class and the group size stay compile-time; the wire
-// format and prequantization are runtime tiling fields.
+// Only the input element class and the group size stay compile-time in the
+// Ahead-of-Time build; the wire format and prequantization are runtime tiling
+// fields. The JIT build freezes B/H/K/E and those flags as well.
 template <class XType, uint32_t Group = 16U>
 class ServerDedupSender {
 public:
@@ -38,24 +40,35 @@ public:
                                 bool enableDedup = true, uint32_t coreNum = 0U)
     {
         args_ = args;
+#ifndef DEEPEP_LL_JIT_SPECIALIZED
         prequantized_ = inputMode == EpServerDedupInputMode::PrequantizedFp8Packs;
         needQuantize_ = inputMode == EpServerDedupInputMode::Quantize16;
         e4m3_ = e4m3;
-        inputRowBytes_ = uint32_t(prequantized_ ? h : h * sizeof(XType));
-        sendCores_ = (coreNum == 0U ? GetBlockNum() : coreNum) / 2U;
-        pipe_ = pipe;
         enableDedup_ = enableDedup;
-        fullMeshFirstHop_ = Group == kLlPhysicalRanksPerHost && LlTransport::Rdma(args);
         bs_ = bs;
         h_ = h;
         k_ = k;
         experts_ = experts;
-        localExperts_ = experts / args->rankSize;
+        inputMode_ = inputMode;
+#else
+        (void)inputMode;
+        (void)e4m3;
+        (void)enableDedup;
+        (void)bs;
+        (void)h;
+        (void)k;
+        (void)experts;
+#endif
+        inputRowBytes_ = uint32_t(prequantized_ ? h_ : h_ * sizeof(XType));
+        sendCores_ = (coreNum == 0U ? DEEPEP_LL_LAUNCH_CORES() : coreNum) / 2U;
+        pipe_ = pipe;
+        fullMeshFirstHop_ = Group == kLlPhysicalRanksPerHost && LlTransport::Rdma(args);
+        localExperts_ = experts_ / DEEPEP_LL_LAUNCH_WORLD(args);
         const uint32_t core = GetBlockIdx();
-        const uint32_t base = bs / sendCores_, remainder = bs % sendCores_;
+        const uint32_t base = bs_ / sendCores_, remainder = bs_ % sendCores_;
         count_ = base + (core < remainder ? 1U : 0U);
         start_ = core * base + (core < remainder ? core : remainder);
-        data_ = DispatchServerDedupDataLayout(bs, h, k, experts, inputMode);
+        data_ = DispatchServerDedupDataLayout(bs_, h_, k_, experts_, inputMode_);
         data_.dispatchOffset += DispatchServerDedupWindowOffset(magic);
         inputScales_.SetGlobalBuffer(inputScales);
         x_.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t*>(x));
@@ -129,9 +142,9 @@ public:
         Allocate(maskBuf_, uint32_t(DispatchDedupAlign(uint64_t(count_) * 4U, 32U)));
         Allocate(directBuf_, uint32_t(DispatchDedupAlign(uint64_t(count_) * k_ * 16U, 32U)));
         // One uint32 state per server, including EP256's 16 host groups.
-        const uint32_t serverBytes = uint32_t(DispatchDedupAlign(uint64_t(args_->rankSize / Group) * 4U, 32U));
+        const uint32_t serverBytes = uint32_t(DispatchDedupAlign(uint64_t(DEEPEP_LL_LAUNCH_WORLD(args_) / Group) * 4U, 32U));
         Allocate(serverBuf_, serverBytes < 64U ? 64U : serverBytes);
-        const uint32_t remoteServers = args_->rankSize / Group - 1U;
+        const uint32_t remoteServers = DEEPEP_LL_LAUNCH_WORLD(args_) / Group - 1U;
         const uint32_t maxGroups = remoteServers < k_ / 2U ? remoteServers : k_ / 2U;
         if (maxGroups != 0U) Allocate(firstHopBuf_, uint32_t(DispatchDedupAlign(maxGroups * 4U, 32U)));
 
@@ -258,7 +271,7 @@ public:
         // Stable per-server scans retain the original q and token/k order.
         // Each core advances independently; the packet/lane sequence continues
         // across first hops and server boundaries without an added drain.
-        const uint32_t serverNum = args_->rankSize / Group;
+        const uint32_t serverNum = DEEPEP_LL_LAUNCH_WORLD(args_) / Group;
         const uint32_t expertsPerServer = localExperts_ * Group;
         const uint32_t ownServer = args_->rank / Group;
         LlBuildStableTaskGroups(directTasks_, directCount_, expertsPerServer, serverNum, serverState_);
@@ -284,7 +297,7 @@ public:
         const uint32_t remainder = total % sendCores_;
         const uint32_t begin = core * base + (core < remainder ? core : remainder);
         const uint32_t count = base + (core < remainder ? 1U : 0U);
-        const uint32_t serverNum = args_->rankSize / Group;
+        const uint32_t serverNum = DEEPEP_LL_LAUNCH_WORLD(args_) / Group;
         if (serverNum < 16U) {
             for (uint32_t i = begin; i < begin + count; ++i) {
                 const uint32_t expert = uint32_t(routeIds_.GetValue(i));
@@ -550,13 +563,13 @@ private:
         if (LlTransport::RemoteWrite(args_, destination)) {
             rdmaBatch_.Enqueue(destination,
                 DispatchServerDedupDispatchOffset(data_, args_->rank, destination,
-                    expert % localExperts_, q, args_->rankSize, localExperts_, bs_), out, lanes_ > 1U);
+                    expert % localExperts_, q, DEEPEP_LL_LAUNCH_WORLD(args_), localExperts_, bs_), out, lanes_ > 1U);
         } else
 #endif
         {
         LlTransport::Packet(args_, destination,
             DispatchServerDedupDispatchOffset(data_, args_->rank, destination,
-                expert % localExperts_, q, args_->rankSize, localExperts_, bs_), out, uint32_t(data_.tokenStride), 7U);
+                expert % localExperts_, q, DEEPEP_LL_LAUNCH_WORLD(args_), localExperts_, bs_), out, uint32_t(data_.tokenStride), 7U);
         }
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
         if (packetProfile_) packetProfile_->GroupSubmitted();
@@ -576,11 +589,30 @@ private:
     LocalTensor<uint8_t> cachedInput_;
     LocalTensor<uint8_t> cachedPayload_;
     uint32_t cachedTailEntries_ = 0U;
+#ifdef DEEPEP_LL_JIT_SPECIALIZED
+    // Baked into the JIT translation unit; see dispatch_entry.h.
+    static constexpr bool enableDedup_ = bool(DEEPEP_LL_JIT_SPEC_DEDUP);
+    static constexpr bool prequantized_ = DEEPEP_LL_JIT_SPEC_INPUT_MODE == 2U;
+    static constexpr bool needQuantize_ = DEEPEP_LL_JIT_SPEC_INPUT_MODE == 1U;
+    static constexpr bool e4m3_ = bool(DEEPEP_LL_JIT_SPEC_E4M3);
+    static constexpr uint32_t bs_ = DEEPEP_LL_JIT_SPEC_BS;
+    static constexpr uint32_t h_ = DEEPEP_LL_JIT_SPEC_H;
+    static constexpr uint32_t k_ = DEEPEP_LL_JIT_SPEC_TOPK;
+    static constexpr uint32_t experts_ = DEEPEP_LL_JIT_SPEC_EXPERTS;
+    static constexpr EpServerDedupInputMode inputMode_ =
+        static_cast<EpServerDedupInputMode>(DEEPEP_LL_JIT_SPEC_INPUT_MODE);
+#else
     bool enableDedup_ = false, fullMeshFirstHop_ = false;
     bool prequantized_ = false, needQuantize_ = false, e4m3_ = true;
+    uint32_t bs_ = 0, h_ = 0, k_ = 0, experts_ = 0;
+    EpServerDedupInputMode inputMode_ = EpServerDedupInputMode::Plain16;
+#endif
     TBufPool<TPosition::VECCALC, 16>* scratch_ = nullptr;
     uint32_t sendCores_ = 0;
-    uint32_t bs_ = 0, h_ = 0, k_ = 0, experts_ = 0, localExperts_ = 0, start_ = 0, count_ = 0;
+#ifdef DEEPEP_LL_JIT_SPECIALIZED
+    bool fullMeshFirstHop_ = false;
+#endif
+    uint32_t localExperts_ = 0, start_ = 0, count_ = 0;
     uint32_t inputRowBytes_ = 0;
     uint32_t usedBytes_ = 0, lanes_ = 0, packets_ = 0, directCount_ = 0;
     EpServerDedupDataLayout data_{};

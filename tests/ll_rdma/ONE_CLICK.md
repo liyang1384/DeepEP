@@ -137,6 +137,10 @@ bash tests/ll_rdma/one_click.sh 0 192.0.2.10 ndr-plan --plan
 ## 运行期 JIT（可选）
 
 各节点在构建前设置相同的 `DEEPEP_LL_JIT=ON`，dispatch 入口改为首次调用时由 DeepJIT 编译，combine 仍为 AOT。
+JIT 会按每次调用的 B/H/K/E、输入模式、E4M3、dedup 决策、world 与 active core 数生成编译期常量，
+每个不同 case 各编译一份 kernel；同一 case 在本进程内只编一次，跨进程/跨 rank 复用磁盘缓存
+（目录名带形状与 `n<cores>_w<world>` 字段）。该构建下 dispatch 不读 tiling，Python 也不再每次
+构建并上传 32B tiling。
 命令、参数和结果目录都不变；脚本会额外初始化 `third-party/deep_jit` 子模块。
 身份校验会拒绝 JIT/AOT 混装，以及 `--skip-build` 时开关与已装 wheel 不一致。
 编译缓存与预处理临时文件默认在工程内 `.cache/jit`，需要跨机复用时把 `DEEPEP_JIT_CACHE_DIR`

@@ -3,9 +3,11 @@
 
 // One LL dispatch entry. The kernel body lives here rather than in the
 // translation unit so the same source can be compiled ahead of time or through
-// a JIT backend without duplicating any logic. Only the input element class and
-// the group size are compile-time; plain, quantized and prequantized wire
-// formats are runtime tiling fields.
+// a JIT backend without duplicating any logic. The input element class and the
+// group size are compile-time in every build; the JIT backend additionally
+// bakes B/H/K/E, the input mode, E4M3 and the dedup decision into the
+// translation unit (DEEPEP_LL_JIT_SPECIALIZED). The Ahead-of-Time build keeps
+// those as runtime tiling fields of the two instantiations it already has.
 #pragma once
 #include <cstdint>
 
@@ -36,6 +38,22 @@ extern "C" [[bisheng::core_ratio(0, 1)]] __global__ __aicore__ void dispatch_ser
     profile.Value<0>(referenceEntry);  // w0: kernel_entry
     profile.Mark<1>();  // w1: config_ready
 
+    AscendC::TPipe pipe;
+#ifdef DEEPEP_LL_JIT_SPECIALIZED
+    // The JIT unit bakes the entire launch identity. Tiling is neither read nor
+    // uploaded for this build; a mismatched Host key would be a Host bug, and
+    // the cache key keeps one binary per shape/world/core combination.
+    (void)tilingData;
+    constexpr uint32_t rankSize = DEEPEP_LL_JIT_SPEC_WORLD;
+    constexpr uint32_t bs = DEEPEP_LL_JIT_SPEC_BS;
+    constexpr uint32_t h = DEEPEP_LL_JIT_SPEC_H;
+    constexpr uint32_t topK = DEEPEP_LL_JIT_SPEC_TOPK;
+    constexpr uint32_t moeExpertNum = DEEPEP_LL_JIT_SPEC_EXPERTS;
+    constexpr uint32_t expertTokenNumsType = DispatchDedup::kLlExpertTokenNumsType;
+    constexpr auto inputMode = static_cast<DispatchDedup::EpServerDedupInputMode>(DEEPEP_LL_JIT_SPEC_INPUT_MODE);
+    constexpr bool e4m3 = bool(DEEPEP_LL_JIT_SPEC_E4M3);
+    constexpr bool enableDedup = bool(DEEPEP_LL_JIT_SPEC_DEDUP);
+#else
     // Host owns validation; each core reads its configuration once before work.
     const auto* tiling = reinterpret_cast<const __gm__ DispatchDedup::EpServerDedupTilingData*>(tilingData);
     const uint32_t rankSize = uint32_t(reinterpret_cast<const __gm__ DispatchDedup::CommArgs*>(commArgs)->rankSize);
@@ -52,13 +70,13 @@ extern "C" [[bisheng::core_ratio(0, 1)]] __global__ __aicore__ void dispatch_ser
     const auto inputMode = static_cast<DispatchDedup::EpServerDedupInputMode>(tiling->inputMode);
     const uint32_t inputClass =
         DispatchDedup::LlDispatchInputClass(dtype, quantMode, expandXOutDtype, uint8_t(inputMode));
-    AscendC::TPipe pipe;
 
     // Host chooses the same class from the same tiling builder; the device
     // rechecks it so an unsupported format can never run a different kernel.
     if (inputClass == DispatchDedup::kLlDispatchInvalidVariant) { AscendC::Trap(); return; }
     const bool e4m3 = expandXOutDtype == DispatchDedup::kLlDispatchE4M3;
     const uint32_t group = tiling->tilingKey;
+#endif
 
 #define DISPATCH_SERVER_DEDUP_RUN(XType, Group)                                                              \
     {                                                                                                        \
@@ -69,6 +87,13 @@ extern "C" [[bisheng::core_ratio(0, 1)]] __global__ __aicore__ void dispatch_ser
                     inputScales, enableDedup, &profile);                                                     \
         kernel.Process();                                                                                    \
     }
+#ifdef DEEPEP_LL_JIT_SPECIALIZED
+#if DEEPEP_LL_JIT_SPEC_INPUT_CLASS == 1
+    DISPATCH_SERVER_DEDUP_RUN(bfloat16_t, DEEPEP_LL_JIT_SPEC_GROUP)
+#else
+    DISPATCH_SERVER_DEDUP_RUN(half, DEEPEP_LL_JIT_SPEC_GROUP)
+#endif
+#else
     if (inputClass == DispatchDedup::kLlDispatchInputBf16) {
         if (group == uint32_t(DispatchDedup::LlTilingKey::Group4)) {
             DISPATCH_SERVER_DEDUP_RUN(bfloat16_t, 4U);
@@ -82,6 +107,7 @@ extern "C" [[bisheng::core_ratio(0, 1)]] __global__ __aicore__ void dispatch_ser
             DISPATCH_SERVER_DEDUP_RUN(half, 16U);
         }
     }
+#endif
 #undef DISPATCH_SERVER_DEDUP_RUN
 
     profile.Finish(uint32_t(reinterpret_cast<const __gm__ DispatchDedup::CommArgs*>(commArgs)->rank), rankSize, bs);

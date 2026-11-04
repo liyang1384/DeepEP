@@ -498,13 +498,16 @@ class ElasticBuffer:
                         "source_mask": torch.empty((b,), dtype=torch.int32, device=hidden.device),
                         "source_weights": torch.empty((b, k), dtype=torch.float32, device=hidden.device),
                         "comm_args": runtime.low_latency_comm_args,
-                        "tiling": self._upload_low_latency(
+                    }
+                    if not getattr(native, "low_latency_jit", False):
+                        # The JIT kernel bakes the launch identity and never reads
+                        # tiling, so this build skips the per-call build/upload.
+                        tensors["tiling"] = self._upload_low_latency(
                             native.low_latency_dispatch_tiling(
                                 runtime.world_size, b, h, k, num_experts, dtype, capacity
                             ),
                             hidden.device,
-                        ),
-                    }
+                        )
                     from ..utils.ll_stage_timer import attach
                     attach(self, tensors, "dispatch")
                     from ..utils.ll_reference_profile import attach as attach_reference
@@ -514,7 +517,16 @@ class ElasticBuffer:
                     for value in retained:
                         value.record_stream(runtime.stream)
                     native.dispatch_low_latency(
-                        runtime.native, tensors, b, h, k, num_experts, output_rows, dtype, runtime.stream.npu_stream
+                        runtime.native,
+                        tensors,
+                        b,
+                        h,
+                        k,
+                        num_experts,
+                        output_rows,
+                        capacity,
+                        dtype,
+                        runtime.stream.npu_stream,
                     )
                     result = EPHandle(
                         True,

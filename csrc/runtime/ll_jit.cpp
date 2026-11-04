@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -270,11 +271,40 @@ std::string header_fingerprint() {
     return text.str();
 }
 
-std::string entry_source() {
+std::string entry_source(const LlDispatchJitSpec& spec) {
     const auto entry = source_root() / kEntryHeader;
     if (!std::filesystem::is_regular_file(entry))
         throw std::runtime_error("LL JIT cannot find " + entry.string());
-    return "#include <" + std::string(kEntryHeader) + ">\n";
+    // DeepJIT hashes this text, so every distinct case gets its own disk cache
+    // entry. The macros are the only place the kernel learns its shape: the
+    // device rechecks the same values against the tiling before running.
+    std::ostringstream source;
+    source << "#define DEEPEP_LL_JIT_SPECIALIZED 1\n"
+           << "#define DEEPEP_LL_JIT_SPEC_BS " << spec.bs << "U\n"
+           << "#define DEEPEP_LL_JIT_SPEC_H " << spec.h << "U\n"
+           << "#define DEEPEP_LL_JIT_SPEC_TOPK " << spec.topK << "U\n"
+           << "#define DEEPEP_LL_JIT_SPEC_EXPERTS " << spec.experts << "U\n"
+           << "#define DEEPEP_LL_JIT_SPEC_CORES " << spec.cores << "U\n"
+           << "#define DEEPEP_LL_JIT_SPEC_WORLD " << spec.world << "U\n"
+           << "#define DEEPEP_LL_JIT_SPEC_INPUT_CLASS " << spec.inputClass << "U\n"
+           << "#define DEEPEP_LL_JIT_SPEC_GROUP " << spec.group << "U\n"
+           << "#define DEEPEP_LL_JIT_SPEC_INPUT_MODE " << spec.inputMode << "U\n"
+           << "#define DEEPEP_LL_JIT_SPEC_E4M3 " << (spec.e4m3 ? 1 : 0) << "\n"
+           << "#define DEEPEP_LL_JIT_SPEC_DEDUP " << (spec.dedup ? 1 : 0) << "\n"
+           << "#include <" << kEntryHeader << ">\n";
+    return source.str();
+}
+
+// Cache entry names may only contain letters, digits and underscores. Only
+// baked values appear here: the per-rank capacity is already folded into the
+// dedup bit, so two capacities with the same decision share one kernel.
+std::string spec_tag(const LlDispatchJitSpec& spec) {
+    std::ostringstream tag;
+    tag << "ll_dispatch_b" << spec.bs << "_h" << spec.h << "_k" << spec.topK << "_e" << spec.experts
+        << "_n" << spec.cores << "_w" << spec.world
+        << "_c" << spec.inputClass << "_g" << spec.group << "_i" << spec.inputMode
+        << "_q" << (spec.e4m3 ? 1 : 0) << "_d" << (spec.dedup ? 1 : 0);
+    return tag.str();
 }
 
 std::shared_ptr<deep_jit::Runtime<deep_jit::Ascend>> create_runtime() {
@@ -297,24 +327,29 @@ std::shared_ptr<deep_jit::Runtime<deep_jit::Ascend>> create_runtime() {
     }
 }
 
-std::shared_ptr<deep_jit::ascend::Kernel>& kernel() {
-    static std::shared_ptr<deep_jit::ascend::Kernel> instance;
-    return instance;
+std::map<std::string, std::shared_ptr<deep_jit::ascend::Kernel>>& kernel_cache() {
+    static std::map<std::string, std::shared_ptr<deep_jit::ascend::Kernel>> instances;
+    return instances;
 }
 
-// Compile once per process. DeepJIT publishes a disk cache entry, so later
-// processes (and ranks sharing a cache directory) skip Bisheng entirely.
-std::shared_ptr<deep_jit::ascend::Kernel> compile_kernel(deep_jit::Runtime<deep_jit::Ascend>& jit) {
+// Compile once per distinct case and process. DeepJIT publishes a disk cache
+// entry, so later processes (and ranks sharing a cache directory) skip Bisheng
+// entirely.
+std::shared_ptr<deep_jit::ascend::Kernel> compile_kernel(deep_jit::Runtime<deep_jit::Ascend>& jit,
+                                                         const LlDispatchJitSpec& spec) {
     deep_jit::ascend::CompilerOptions overrides;
     overrides.extra_bisheng_flags = jit_flags();
-    return jit.compile("ll_dispatch", entry_source(), overrides);
+    return jit.compile(spec_tag(spec), entry_source(spec), overrides);
 }
 }  // namespace
 
-void ll_jit_launch(void* stream, const EpServerDedupKernelArgs& args) {
+void ll_jit_launch(void* stream, const EpServerDedupKernelArgs& args, const LlDispatchJitSpec& spec) {
     std::lock_guard<std::mutex> lock(launch_mutex());
     if (!runtime()) runtime() = create_runtime();
-    if (!kernel()) kernel() = compile_kernel(*runtime());
+    auto& kernels = kernel_cache();
+    const std::string key = spec_tag(spec);
+    auto entry = kernels.find(key);
+    if (entry == kernels.end()) entry = kernels.emplace(key, compile_kernel(*runtime(), spec)).first;
 
     // Assign fields instead of using a designated initializer: DeepJIT adds
     // launch options over time, and every omitted field is a -Wextra error here.
@@ -324,7 +359,7 @@ void ll_jit_launch(void* stream, const EpServerDedupKernelArgs& args) {
     options.num_ubuf_bytes = 0;
 
     runtime()->launch(
-        kernel(),
+        entry->second,
         options,
         args.commArgs, args.x, args.expertIds, args.expertScales, args.expandXOut, args.dynamicScalesOut,
         args.expertTokenNumsOut, args.sendCountsOut, args.tokenTypeOut, args.destinationIndexOut,

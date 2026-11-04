@@ -10,6 +10,12 @@
 namespace DispatchDedup {
 // Shared Host/AICore wire layout. Host validates before narrowing.
 // Magic is persistent device state, not tiling or a Host launch value.
+//
+// expertTokenNumsType is a protocol constant, not a per-case choice: the Host
+// tiling builder writes this value and neither side ever varies it. The JIT
+// build bakes the same constant, so the field is only kept for the tiling
+// recheck and the Ahead-of-Time path.
+constexpr uint8_t kLlExpertTokenNumsType = 1;
 struct EpServerDedupTilingData {
     uint32_t bs;
     uint32_t h;

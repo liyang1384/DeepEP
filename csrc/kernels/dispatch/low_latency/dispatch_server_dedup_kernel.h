@@ -5,14 +5,17 @@
 #define DISPATCH_SERVER_DEDUP_KERNEL_H
 
 #include "common/ll_reference_profile_device.h"
+#include "common/ll_jit_spec.h"
 #include "device/dispatch_server_dedup_magic.h"
 #include "device/dispatch_server_dedup_counts.h"
 #include "device/dispatch_server_dedup_send.h"
 #include "device/dispatch_server_dedup_recv.h"
 
 namespace DispatchDedup {
-// The input element class and the group size are the only compile-time axes;
-// plain/quantized/prequantized wire formats come from the runtime tiling.
+// The input element class and the group size are the only compile-time axes of
+// the Ahead-of-Time build; plain/quantized/prequantized wire formats come from
+// the runtime tiling. The JIT build additionally freezes B/H/K/E and the format
+// flags through DEEPEP_LL_JIT_SPEC_* (see dispatch_entry.h).
 template <class XType, uint32_t Group = 16U>
 class DispatchMemoryServerDedupKernel {
 public:
@@ -29,7 +32,7 @@ public:
         profile_ = profile;
         args_ = reinterpret_cast<const __gm__ DispatchDedup::CommArgs*>(commArgs);
         core_ = GetBlockIdx();
-        sendCores_ = GetBlockNum() / 2U;
+        sendCores_ = DEEPEP_LL_LAUNCH_CORES() / 2U;
         pipe_ = pipe;
 
         if (profile_) profile_->Mark<2>();  // w2: magic_begin

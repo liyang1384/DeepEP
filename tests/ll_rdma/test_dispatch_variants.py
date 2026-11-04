@@ -110,7 +110,7 @@ def test_jit_build_reuses_the_single_dispatch_entry():
     assert "dispatch_server_dedup_kernel_do" in launch
     host = (ROOT / "csrc/ops/low_latency.cpp").read_text(encoding="utf-8")
     assert "#ifdef DEEPEP_LL_JIT" in host
-    assert "deepep::ll_jit_launch(reinterpret_cast<void*>(stream_address), args)" in host
+    assert "deepep::ll_jit_launch(reinterpret_cast<void*>(stream_address), args, spec)" in host
     device = (ROOT / "cmake/device/CMakeLists.txt").read_text(encoding="utf-8")
     assert device.index("if(NOT DEEPEP_LL_JIT)") < device.index(
         '"${DEEPEP_SOURCE_DIR}/csrc/kernels/dispatch/low_latency.cpp"')
@@ -119,9 +119,25 @@ def test_jit_build_reuses_the_single_dispatch_entry():
     assert "kernels/dispatch/low_latency/dispatch_entry.h" in jit
     # DeepJIT's parser rejects quoted includes, so only the entry line uses an
     # angle include and the header trees are hashed into the cache signature.
-    assert 'return "#include <" + std::string(kEntryHeader) + ">\\n";' in jit
+    assert '<< "#include <" << kEntryHeader' in jit
     assert "header_fingerprint()" in jit
-    assert 'jit.compile("ll_dispatch", entry_source(), overrides)' in jit
+    # Every distinct case is baked into its own translation unit and cache key.
+    assert "#define DEEPEP_LL_JIT_SPECIALIZED 1" in jit
+    assert "jit.compile(spec_tag(spec), entry_source(spec), overrides)" in jit
+    for macro in ("DEEPEP_LL_JIT_SPEC_BS", "DEEPEP_LL_JIT_SPEC_H", "DEEPEP_LL_JIT_SPEC_TOPK",
+                  "DEEPEP_LL_JIT_SPEC_EXPERTS", "DEEPEP_LL_JIT_SPEC_CORES", "DEEPEP_LL_JIT_SPEC_WORLD",
+                  "DEEPEP_LL_JIT_SPEC_INPUT_MODE", "DEEPEP_LL_JIT_SPEC_E4M3", "DEEPEP_LL_JIT_SPEC_DEDUP"):
+        assert f'#define {macro} "' in jit
+    assert "DEEPEP_LL_JIT_SPEC_BS" in entry and "AscendC::Trap();" in entry
+    # The JIT unit carries the whole launch identity: tiling is not read, and
+    # Python skips building/uploading it for this build.
+    assert "(void)tilingData;" in entry and "tiling->" not in entry.split("#else", 1)[0]
+    assert "spec.cores = args.coreNum;" in host and "low_latency_jit" in host
+    assert "args.tilingData = nullptr;" in host
+    python = (ROOT / "deep_ep/buffers/elastic.py").read_text(encoding="utf-8")
+    assert 'getattr(native, "low_latency_jit", False)' in python
+    spec = (ROOT / "csrc/kernels/dispatch/low_latency/common/ll_jit_spec.h").read_text(encoding="utf-8")
+    assert "DEEPEP_LL_LAUNCH_WORLD" in spec and "DEEPEP_LL_LAUNCH_CORES" in spec
 
 
 def test_host_launch_uses_same_format_builder_as_tiling():

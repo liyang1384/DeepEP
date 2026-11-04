@@ -13,6 +13,7 @@
 #include "../kernels/dispatch/low_latency/common/ll_reference_profile_layout.h"
 #include "../kernels/dispatch/low_latency/common/ll_expert_timer_layout.h"
 #include "../kernels/dispatch/low_latency/common/ll_dispatch_variant.h"
+#include "../kernels/dispatch/low_latency/common/ep_memory_server_dedup_mode.h"
 #include "../runtime/ll_jit.hpp"
 #include "host/mem/shmem_host_heap.h"
 #include "host/data_plane/shmem_host_rma.h"
@@ -171,6 +172,13 @@ void bind_low_latency(py::module_& module)
     module.attr("low_latency_core_protocol") = DispatchDedup::kLlCoreProtocolVersion;
     module.attr("low_latency_roce_qps_per_peer") = 0; // actual active physical cores
     module.attr("low_latency_implementation") = "ndr-hns1825";
+#ifdef DEEPEP_LL_JIT
+    // The JIT kernel is compiled per launch identity and never reads tiling, so
+    // Python skips building and uploading it.
+    module.attr("low_latency_jit") = true;
+#else
+    module.attr("low_latency_jit") = false;
+#endif
 #ifdef DEEPEP_LL_RDMA
     if (!deepep_ll_rdma_enabled()) throw std::runtime_error("LL Host/device RDMA build mismatch; rebuild complete wheel");
     module.attr("low_latency_rdma_enabled") = true;
@@ -287,7 +295,7 @@ void bind_low_latency(py::module_& module)
         data.numMaxTokensPerRank = num_max_tokens_per_rank;
         data.topK = k;
         data.moeExpertNum = e;
-        data.expertTokenNumsType = 1;
+        data.expertTokenNumsType = DispatchDedup::kLlExpertTokenNumsType;
         return bytes(data);
     });
     module.def("low_latency_combine_tiling",
@@ -307,7 +315,8 @@ void bind_low_latency(py::module_& module)
                    return bytes(data);
                });
     module.def("dispatch_low_latency", [](Session& session, py::dict tensors, int b, int h, int k, int e, int rows,
-                                          const std::string& dtype, uintptr_t stream_address) {
+                                          int num_max_tokens_per_rank, const std::string& dtype,
+                                          uintptr_t stream_address) {
         if (session.combine_only()) throw std::invalid_argument("LL requires a dense-channel Session");
         dtype_code(dtype);
         const bool fp8 = dtype == "float8_e4m3fn";
@@ -347,14 +356,34 @@ void bind_low_latency(py::module_& module)
         args.relayReadIndexOut = get("relay_read_index", {c, k, 2}, "int32");
         args.sourceMaskOut = get("source_mask", {b}, "int32");
         args.expertScalesOut = get("source_weights", {b, k}, "float32");
+#ifdef DEEPEP_LL_JIT
+        args.tilingData = nullptr;  // The JIT kernel never reads tiling.
+#else
         args.tilingData = get("tiling", {sizeof(DispatchDedup::EpServerDedupTilingData)}, "uint8");
+#endif
         args.inputScales = fp8 ? get("scales", {b, (h + 127) / 128}, scale_dtype) : nullptr;
         session.workspace();  // Validate the owning context before launch.
         py::gil_scoped_release release;
         session.invalidate_dispatch_controls();
 #ifdef DEEPEP_LL_JIT
-        deepep::ll_jit_launch(reinterpret_cast<void*>(stream_address), args);
+        // The JIT unit is built for one exact launch identity, so the tiling
+        // buffer is neither uploaded nor read below.
+        deepep::LlDispatchJitSpec spec{};
+        spec.bs = uint32_t(b);
+        spec.h = uint32_t(h);
+        spec.topK = uint32_t(k);
+        spec.experts = uint32_t(e);
+        spec.cores = args.coreNum;
+        spec.world = uint32_t(session.world());
+        spec.inputClass = DispatchDedup::LlDispatchInputClass(format.dtype, format.quantMode,
+                                                              format.expandXOutDtype, format.inputMode);
+        spec.group = uint32_t(format.tilingKey);
+        spec.inputMode = uint32_t(format.inputMode);
+        spec.e4m3 = format.expandXOutDtype == DispatchDedup::kLlDispatchE4M3;
+        spec.dedup = DispatchDedup::EpServerDedupEnabled(uint32_t(num_max_tokens_per_rank), spec.bs, spec.world);
+        deepep::ll_jit_launch(reinterpret_cast<void*>(stream_address), args, spec);
 #else
+        (void)num_max_tokens_per_rank;
         dispatch_server_dedup_kernel_do(reinterpret_cast<void*>(stream_address), &args);
 #endif
     });

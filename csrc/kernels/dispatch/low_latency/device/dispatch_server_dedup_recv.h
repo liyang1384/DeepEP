@@ -4,6 +4,7 @@
 #ifndef DISPATCH_SERVER_DEDUP_RECV_H
 #define DISPATCH_SERVER_DEDUP_RECV_H
 #include "../common/ll_reference_profile_device.h"
+#include "../common/ll_jit_spec.h"
 
 #include "kernel_operator.h"
 #include "ll_transport.h"
@@ -28,20 +29,30 @@ public:
                                 TPipe* pipe, int64_t magic = 0, bool enableDedup = true)
     {
         args_ = args;
+#ifndef DEEPEP_LL_JIT_SPECIALIZED
         wireFp8_ = inputMode != EpServerDedupInputMode::Plain16;
-
-        coreNum_ = GetBlockNum();
-        recvCoreNum_ = coreNum_ / 2U;
-        pipe_ = pipe;
+        inputMode_ = inputMode;
         enableDedup_ = enableDedup;
         bs_ = bs;
         k_ = k;
         experts_ = experts;
-        localExperts_ = experts / uint32_t(args_->rankSize);
+        h_ = h;
+#else
+        (void)inputMode;
+        (void)enableDedup;
+        (void)bs;
+        (void)k;
+        (void)experts;
+        (void)h;
+#endif
+        coreNum_ = DEEPEP_LL_LAUNCH_CORES();
+        recvCoreNum_ = coreNum_ / 2U;
+        pipe_ = pipe;
+        localExperts_ = experts_ / DEEPEP_LL_LAUNCH_WORLD(args_);
         receiver_ = GetBlockIdx() - recvCoreNum_;
         // Both admitted 16-bit input families occupy two bytes per element.
-        hiddenBytes_ = wireFp8_ ? h : h * 2U;
-        data_ = DispatchServerDedupDataLayout(bs, h, k, experts, inputMode);
+        hiddenBytes_ = wireFp8_ ? h_ : h_ * 2U;
+        data_ = DispatchServerDedupDataLayout(bs_, h_, k_, experts_, inputMode_);
         windowOffset_ = DispatchServerDedupWindowOffset(magic);
         data_.dispatchOffset += windowOffset_;
         expandX_.SetGlobalBuffer(expandX);
@@ -74,7 +85,7 @@ public:
 
         // 2. 按前缀定义的接收输出行均分任务，建立稳定槽位表和可压缩的 pending 表。
         // j 始终标识固定输出行/槽位；pending 下标只表示尚未消费的任务位置。
-        tasks_.Build(prefix, uint32_t(args_->rank), uint32_t(args_->rankSize), experts_, bs_, receiver_, pipe_, recvCoreNum_);
+        tasks_.Build(prefix, uint32_t(args_->rank), DEEPEP_LL_LAUNCH_WORLD(args_), experts_, bs_, receiver_, pipe_, recvCoreNum_);
         if (profile) {
             profile->Mark<31>();  // w31: receive_tasks_built
             profile->Value<37>(tasks_.Count());  // w37: receive_task_count
@@ -419,7 +430,7 @@ private:
             DataCopyPad(relayReadIndex_[uint64_t(row) * k_ * 2U], tail.ReadIndex(), {1U, k_ * 8U, 0U, 0U, 0U});
 
             const uint32_t sourceRank = tail.Header().GetValue(0U);
-            const uint32_t ranks = uint32_t(args_->rankSize);
+            const uint32_t ranks = DEEPEP_LL_LAUNCH_WORLD(args_);
             const uint32_t members = tail.ReadIndex().GetValue(0U);
             for (uint32_t i = 0U; i < members; ++i) {
                 const uint32_t index = tail.Entry(i).GetValue(0U);
@@ -459,10 +470,24 @@ public:
 private:
     const __gm__ DispatchDedup::CommArgs* args_ = nullptr;
     TPipe* pipe_ = nullptr;
+#ifdef DEEPEP_LL_JIT_SPECIALIZED
+    // Baked into the JIT translation unit; see dispatch_entry.h.
+    static constexpr bool enableDedup_ = bool(DEEPEP_LL_JIT_SPEC_DEDUP);
+    static constexpr bool wireFp8_ = DEEPEP_LL_JIT_SPEC_INPUT_MODE != 0U;
+    static constexpr uint32_t bs_ = DEEPEP_LL_JIT_SPEC_BS;
+    static constexpr uint32_t h_ = DEEPEP_LL_JIT_SPEC_H;
+    static constexpr uint32_t k_ = DEEPEP_LL_JIT_SPEC_TOPK;
+    static constexpr uint32_t experts_ = DEEPEP_LL_JIT_SPEC_EXPERTS;
+    static constexpr EpServerDedupInputMode inputMode_ =
+        static_cast<EpServerDedupInputMode>(DEEPEP_LL_JIT_SPEC_INPUT_MODE);
+#else
     bool enableDedup_ = false, wireFp8_ = false;
+    uint32_t bs_ = 0U, h_ = 0U, k_ = 0U, experts_ = 0U;
+    EpServerDedupInputMode inputMode_ = EpServerDedupInputMode::Plain16;
+#endif
     uint64_t windowOffset_ = 0;
     uint32_t recvCoreNum_ = 0, coreNum_ = 0;
-    uint32_t bs_ = 0U, k_ = 0U, experts_ = 0U, localExperts_ = 0U, receiver_ = 0U;
+    uint32_t localExperts_ = 0U, receiver_ = 0U;
     uint32_t hiddenBytes_ = 0U, laneStride_ = 0U, lanes_ = 0U;
     EpServerDedupDataLayout data_{};
     ServerDedupReceiveTasks tasks_;
