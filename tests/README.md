@@ -21,6 +21,7 @@ Modified by Joyce_An 2026
 | `../experiments/megamoe/tests/` | MegaMoE 接口、Golden、主机协调、打包与计时解析；设备入口见 [MegaMoE 文档](../experiments/megamoe/README.md) |
 | `../experiments/ep_gmm_fused/tests/` | 通信计算融合算子的路由参考、精度、性能与 profiler；命令见[组件测试说明](../experiments/ep_gmm_fused/tests/README.md) |
 | `test_reference.py`、`test_precision.py`、`utils/` | 独立路由参考、Golden、dtype 模拟和精度比较器 |
+| `ll_cpp_dispatch/` | MPI + ACL 直调 LL dispatch 的 C++ 示例，不经过 Python/torch；见[说明](ll_cpp_dispatch/README.md) |
 | `legacy/` 及通用 V2 设备用例 | 兼容性测试入口；其参数矩阵不等于当前 Elastic 算子支持范围 |
 
 ## CPU 回归
