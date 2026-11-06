@@ -117,7 +117,7 @@ def test_native_st_reference_schedule(monkeypatch,tmp_path,with_tail):
     assert (args.warmup,args.num_iters,args.perf_tail)==(10,100,50)
     tail=(lambda delay,alignment:calls.append('tail')) if with_tail else None
     st.measure(lambda:calls.append('invoke'),args,'dispatch',tmp_path,after_profile=tail)
-    assert calls==['reduce']+['invoke']*10+['sync']+['exp']*200+['step']+['invoke']*100+['barrier','sync','step','profile_closed']+(['tail'] if with_tail else [])+['parse']
+    assert calls==['reduce']+['invoke']*10+['sync']+['exp']*100+['step']+['invoke']*100+['barrier','sync','step','profile_closed']+(['tail'] if with_tail else [])+['parse']
 
 
 def test_moved_checkout_with_spaces_and_other_cwd(tmp_path):

@@ -48,12 +48,12 @@ def test_mismatched_experiments_cannot_report_speedup(key,value):
     with pytest.raises(ValueError,match='Incomparable'):comparison.compare(left,right,'stage')
 
 
-def test_old_per_iteration_reduce_cannot_be_compared_with_exp200_batch():
+def test_old_per_iteration_reduce_cannot_be_compared_with_exp100_batch():
     left, right = reports()
     left['comparison']['sampling_protocol'] = 'exp-reduce-stable-tail-v2'
     for key in ('exp_prefix_repeats', 'per_iteration_exp', 'per_iteration_all_reduce'):
         left['comparison'].pop(key)
-    assert right['comparison']['sampling_protocol'] == 'initial-reduce-exp200-batch-v3'
+    assert right['comparison']['sampling_protocol'] == 'initial-reduce-exp100-batch-v3'
     with pytest.raises(ValueError, match='sampling_protocol'):
         comparison.compare(left, right, 'stage')
 

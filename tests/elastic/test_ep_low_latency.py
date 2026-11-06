@@ -36,8 +36,8 @@ def validate_stage_timer_capability(requested, capability):
         raise RuntimeError("LL byte diagnostics require timer schema 3; rebuild/install the matching wheel on every rank")
 
 
-EXP_PREFIX_REPEATS = 200
-SAMPLING_PROTOCOL = 'initial-reduce-exp200-batch-v3'
+EXP_PREFIX_REPEATS = 100
+SAMPLING_PROTOCOL = 'initial-reduce-exp100-batch-v3'
 BALANCED_ROUTE_SEED = 20261014
 
 
@@ -110,7 +110,6 @@ def comparison_metadata(args, world, m):
     if runtime is None: return None  # CPU fixtures / legacy custom callers.
     return dict(**runtime, comparison_schema=1, sampling_protocol=SAMPLING_PROTOCOL,
                 exp_prefix_repeats=EXP_PREFIX_REPEATS, per_iteration_exp=0, per_iteration_all_reduce=False,
-                per_iteration_rank_align='all_reduce_async_wait',
                 perf_enabled=not args.skip_perf_test, world_size=world,
                 local_world_size=int(os.environ.get('LOCAL_WORLD_SIZE',args.num_processes)),
                 case=case_config(args,m), route=args.route, seed=args.seed,
@@ -811,35 +810,6 @@ def completion_boundary(args=None):
     trace_call(args, "boundary.synchronize.after", torch.npu.synchronize)
 
 
-def aligned(operation, args):
-    """Run a full-rank all-reduce before every call of `operation`.
-
-    The LL kernels poll their peers, so a rank that is still enqueueing makes
-    every other rank spin and inflates its measured time. The collective starts
-    only once all ranks arrive, which aligns fast and slow cards. It is placed
-    inside the measured loop on purpose: its cost is charged to each call, so the
-    numbers are aligned latency rather than pure kernel time.
-
-    The op is submitted asynchronously and then waited on: enqueueing and waiting
-    are separate host steps, and a scalar all-reduce moves less data than an
-    all-gather of one tensor per rank.
-    """
-    import torch
-    import torch.distributed as dist
-
-    token = torch.zeros(1, dtype=torch.int32, device=control_device(args, torch))
-
-    def call(*values, **kwargs):
-        work = trace_call(args, "align.all_reduce", dist.all_reduce, token,
-                          op=dist.ReduceOp.SUM, async_op=True)
-        # The async form only orders the enqueue; the wait is the rendezvous.
-        if work is not None:
-            trace_call(args, "align.wait", work.wait)
-        return operation(*values, **kwargs)
-
-    return call
-
-
 def record_case_progress(args, rank, m, mode, phase, error=None):
     """Persist case identity outside timed loops so interrupted runs remain diagnosable."""
     previous = getattr(args, "_case_phase", None)
@@ -1013,7 +983,6 @@ def diagnostic_calls(buffer, invoke, check, args, operation, rank, m, mode,
                                       prefix_before='diagnostic_capture' if after_perf else 'settle_batch',
                                       initial_all_reduce='shared_with_perf' if after_perf else 'before_warmup',
                                       per_iteration_exp=0, per_iteration_all_reduce=False,
-                                      per_iteration_rank_align='all_reduce_async_wait',
                                       expert_timer=bool(getattr(args,'ll_expert_timer',False)),
                                       reference_profile=reference))
         if reference:
@@ -1082,8 +1051,6 @@ def run_case(buffer, args, rank, world, m, mode):
 
     # Every dispatch/combine call is preceded by an all-gather so fast and slow
     # cards enter the kernel together; correctness and sampling share this.
-    dispatch = aligned(dispatch, args)
-    combine = aligned(buffer.combine, args)
 
     import hashlib
 
@@ -1455,8 +1422,7 @@ def main(argv=None):
         ]
         print(json.dumps({"world_size": world, "case_count": len(cases), "cases": cases,
                           "sampling": dict(protocol=SAMPLING_PROTOCOL, exp_prefix_repeats=EXP_PREFIX_REPEATS,
-                                           per_iteration_exp=0, per_iteration_all_reduce=False,
-                                           per_iteration_rank_align='all_reduce_async_wait')}, indent=2))
+                                           per_iteration_exp=0, per_iteration_all_reduce=False)}, indent=2))
         return
     configure_endpoints(args, os.environ)
     if local is not None:

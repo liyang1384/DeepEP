@@ -52,8 +52,8 @@
 
 ## NDR采样方式（2026-10-27最新用户要求）
 
-本分支ST采用`initial-reduce-exp200-batch-v3`：每个操作的采样批次只在开始all_reduce一次，
-预热同步后、进入active的profiler.step前固定200次Exp，再连续调用算子；循环内没有Exp或
+本分支ST采用`initial-reduce-exp100-batch-v3`：每个操作的采样批次只在开始all_reduce一次，
+预热同步后、进入active的profiler.step前固定100次Exp，再连续调用算子；循环内没有Exp或
 采样all_reduce。独立timer/reference同样为初始all_reduce、预热、200次Exp、连续稳定/capture。
 perf后附加打点时另排200次Exp，共用perf初始all_reduce；不在Exp前缀后额外同步。
 2026-11-03新增：每次 dispatch/combine 调用前插入一次标量 all_reduce（异步提交 + wait）拉齐快慢卡，

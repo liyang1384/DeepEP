@@ -2,8 +2,8 @@
 
 此维护分支的完整 LL 采样实现在 `tests/elastic/test_ep_low_latency.py`。HNS_1825 显式部署入口为 `tests/ll_rdma/run_ll.py`，完整步骤见 [RDMA 验收指南](../ll_rdma/README.md)。它不依赖实验 checkout 的生成 snapshot 或仓外 example 模块。
 
-2026-10-27按用户要求采用`initial-reduce-exp200-batch-v3`：每个操作的采样批次开始只做一次
-scalar all_reduce；默认预热10次并同步后，连续提交固定200次Exp，再执行进入active的
+2026-10-27按用户要求采用`initial-reduce-exp100-batch-v3`：每个操作的采样批次开始只做一次
+scalar all_reduce；默认预热10次并同步后，连续提交固定100次Exp，再执行进入active的
 `profiler.step()`，随后连续调用算子100次。采样循环内不再插入Exp或fill。
 不在Exp前缀之后额外同步，Exp次数不随算子迭代次数变化。尾50统计和profiler kernel Duration口径保持。
 

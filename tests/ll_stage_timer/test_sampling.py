@@ -59,15 +59,15 @@ def test_tail_has_prelude_and_defers_all_checks(monkeypatch, tmp_path, after_per
     prefix=['allocate']*2
     if not after_perf:
         prefix += ['boundary', 'reduce'] + ['invoke']*2 + ['sync']
-        prefix += ['exp']*200 + ['invoke']*3
+        prefix += ['exp']*100 + ['invoke']*3
     else:
-        prefix += ['exp']*200
+        prefix += ['exp']*100
     assert events == prefix + ['capture', 'invoke', 'wait']*2 + ['boundary'] + ['copy', 'check', 'save']*2
     assert [item['iteration'] for item in saved]==[0, 1]
     assert all(item['sampling']['after_perf']==after_perf for item in saved)
     assert events.count('reduce') == (0 if after_perf else 1)
-    assert all(item['sampling']['sampling_protocol'] == 'initial-reduce-exp200-batch-v3' for item in saved)
-    assert all(item['sampling']['exp_prefix_repeats'] == 200 and not item['sampling']['per_iteration_all_reduce'] for item in saved)
+    assert all(item['sampling']['sampling_protocol'] == 'initial-reduce-exp100-batch-v3' for item in saved)
+    assert all(item['sampling']['exp_prefix_repeats'] == 100 and not item['sampling']['per_iteration_all_reduce'] for item in saved)
 
 
 def test_deferred_context_preserves_records_until_complete(monkeypatch):
