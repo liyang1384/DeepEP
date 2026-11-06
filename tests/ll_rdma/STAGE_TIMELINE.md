@@ -131,6 +131,7 @@ flowchart TD
 | w59 | `magic` | 身份/有效性元数据 |
 | w60 | `boundary_mode` | 身份/有效性元数据 |
 | w61 | `complete` | 身份/有效性元数据 |
+| w62 | `receive_relay_distinct_ranks` | 计数 |
 
 源码位置（每个点均有同名注释）：
 

@@ -227,6 +227,7 @@ public:
             // consume 长尾来自 relay 转发量还是批次稀疏。
             profile->Value<48>(firstHopTokens_);  // w48: receive_first_hop_tokens
             profile->Value<49>(relayMembers_);  // w49: receive_relay_members
+            profile->Value<62>(relayDistinctRanks_);  // w62: receive_relay_distinct_ranks
         }
 #endif
 
@@ -293,8 +294,8 @@ private:
     TBuf<> packetTraceBuf_;
     bool traceEnabled_ = false;
     uint32_t traceCapacity_ = 0U, traceReady_ = 0U, traceProcessed_ = 0U, traceBatches_ = 0U;
-    // 本核消费的 FirstHop token 数与 relay 成员总数。
-    uint32_t firstHopTokens_ = 0U, relayMembers_ = 0U;
+    // 本核消费的 FirstHop token 数、relay 成员总数，以及成员落到不同目标 rank 的数量。
+    uint32_t firstHopTokens_ = 0U, relayMembers_ = 0U, relayDistinctRanks_ = 0U;
 #endif
     static constexpr uint32_t kProbeBatch = 16U;
     struct ProbeResult {
@@ -432,6 +433,20 @@ private:
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
             ++firstHopTokens_;
             relayMembers_ += members;
+            // 同一 first-hop token 的成员落在几个不同目标 rank 上；
+            // members - distinct 就是"同一份 payload 被写进同一 rank 的多个专家槽"的次数。
+            uint64_t seenRanks[4] = {0ULL, 0ULL, 0ULL, 0ULL};
+            uint32_t distinctRanks = 0U;
+            for (uint32_t i = 0U; i < members; ++i) {
+                const uint32_t peerRank = (tail.Entry(i).GetValue(0U) & 0xffffU) / localExperts_;
+                const uint32_t slot = peerRank >> 6U;
+                const uint64_t bit = uint64_t(1) << (peerRank & 63U);
+                if (slot < 4U && (seenRanks[slot] & bit) == 0ULL) {
+                    seenRanks[slot] |= bit;
+                    ++distinctRanks;
+                }
+            }
+            relayDistinctRanks_ += distinctRanks;
 #endif
             for (uint32_t i = 0U; i < members; ++i) {
                 const uint32_t index = tail.Entry(i).GetValue(0U);

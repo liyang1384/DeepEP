@@ -88,7 +88,7 @@ w48 receive_first_hop_tokens  w49 receive_relay_members
 
 | 编号 | 优化点 | 做法 | 依据 | 预期 | 状态 |
 |---|---|---|---|---|---|
-| D1 | **relay 去复制** | 同一份 payload 只落一份（每 `(source,dest-host)` 到达区），各专家槽只存 `(source,q)` 引用；consume 按引用读一次再散写 | `w34 ≈ 6.0 + 1.1×w49`，`w49` 0~12，`w37`/`w41` 无关 | `w34` max 19→~6，`receiver` 24.7→**~13**，R kernel→~33 | 待做 **P1** |
+| D1 | **relay 去复制** | 同一份 payload 只落一份（每 `(source,dest-host)` 到达区），各专家槽只存 `(source,q)` 引用；consume 按引用读一次再散写 | `w34 ≈ 5.8 + 1.1×w49`，`w49` 0~12，`w37`/`w41` 无关；`w49-w62` 才是可省次数 | `w34` max 19→~6，`receiver` 24.7→**~13**，R kernel→~33 | 探针 `w62 receive_relay_distinct_ranks` 已加，待一轮打点确认前提 |
 | D2 | 同 record 多 token 合并搬运 | 同一 record 的 q 个 token 在 peerMem 连续，一次 n-burst `DataCopy` 替代每 token 一次 `DataCopyPad` | 现在每 token 一次 4KB 拷贝 | −1~3µs | 待做 P2 |
 | D3 | 消费顺序 token 行序 → record 序 | 同 record 连续到达、写同一 region | 减少稀疏批次的固定开销 | −1~3µs | 待做 P2 |
 | D4 | `recv_tasks` 二分改前向扫描 | 交错后行号跨步 28，二分 9 步 | 实测 0.44→2.0µs | −1µs | 待做 P3 |
@@ -193,7 +193,9 @@ w48 receive_first_hop_tokens  w49 receive_relay_members
 
 ### 待做：relay 去复制（当前最高优先）
 
-- 现象：`w34 ≈ 4.5 + 1.2 × w49`（µs），relay 成员数是 consume 唯一解释量；`w37`/`w41` 与 `w34` 无关。
+- 现象：`w34 ≈ 5.8 + 1.1 × w49`（µs），relay 成员数是 consume 唯一解释量；`w37`/`w41` 与 `w34` 无关。
+- 前提待确认：relay 成员是 `Packet(...)` 把 UB 里的 `wire` 写到目标 rank 的专家槽，属于必要落地。只有当多个成员指向**同一 destinationRank**（只是 expert 不同）时，才能改成"写一次 + 目标 rank 本地散写"。
+- 判据：`w49 - w62`（`w62 = receive_relay_distinct_ranks`）即可省次数；按最慢核算 `(w49max - w62max) × 1.1µs ≥ 3µs` 才值得动协议，否则 D1 直接否决。
 - 做法：同一份 payload 只落一份（per `(source, dest-host)` 到达区），各专家槽只存 `(source, q)` 引用；consume 时按引用读一次、再散写到 `expandX`。
 - 预期：`w34` 最大 19 → **~6**，`receiver` 24.7 → **~13**，R kernel → **~33**。
 - 风险：改动 consume 读路径与 relay 语义（相当于把 host 内去重从 dest 侧移到消费侧），属协议级；需保证 `ClearFlags`、窗口复用、magic 交替仍然正确。
@@ -266,7 +268,7 @@ count_complete(1.0~3.0)   WaitCumSumFlag 转置屏障 + receiver0 写 expertToke
 
 | 优先级 | 编号 | 理由 |
 |---|---|---|
-| **P1** | D1（relay 去复制） | 唯一还剩 8µs 量级的项，直接决定 R 侧长尾 |
+| **P1** | D1（relay 去复制） | 唯一还剩 8µs 量级的项，直接决定 R 侧长尾；先跑 `w62` 确认 `w49 > w62` |
 | **P2** | E1（先用 word 75 判定）→ B5 / D2 / D3 / F3 | 都在 2~5µs，且互相不冲突 |
 | **P3** | A1 / C6 / D4 / G3 / B6 | 单项 1~3µs，或属诊断完善 |
 | 不做 | A3 / A4 / A5 / C5 / E3 / F1 / D5 / E2 | 原因见 §3 |

@@ -50,7 +50,9 @@ public:
     }
     template <uint32_t Word> __aicore__ inline void Value(uint64_t value)
     {
-        static_assert(Word <= 21U || (Word >= 24U && Word <= 49U) || Word == 57U,
+        // 62 is the only metadata word that still carries an observed counter;
+        // the 64-bit valid mask cannot reach words >= 64.
+        static_assert(Word <= 21U || (Word >= 24U && Word <= 49U) || Word == 57U || Word == 62U,
                       "reference point/counter index");
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
         if (!record_) return;

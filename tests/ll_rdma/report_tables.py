@@ -20,7 +20,7 @@ def csv_table(path, headers, rows):
 
 
 # 非阶段类原始计数，追加在阶段列之后，便于把阶段耗时与同一核的任务量对照。
-REFERENCE_COUNTER_WORDS = (37, 41, 43, 48, 49)
+REFERENCE_COUNTER_WORDS = (37, 41, 43, 48, 49, 62)
 
 
 def wide_records(selected, timer, frequency):
