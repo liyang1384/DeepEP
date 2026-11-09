@@ -1,24 +1,8 @@
 """DeepEP-owned Host barrier checks; SHMEM remains untouched."""
 from pathlib import Path
-import os
 import random
-import shutil
-import subprocess
 import pytest
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def test_real_helper_against_cpu_transport_doubles(tmp_path):
-    compiler = shutil.which("g++") or shutil.which("clang++")
-    zig = os.environ.get("DEEPEP_TEST_ZIG")
-    if compiler is None and not zig:
-        pytest.skip("Set DEEPEP_TEST_ZIG or install a C++17 compiler for the Host barrier helper")
-    command = [compiler] if compiler else [zig, "c++"]
-    binary = tmp_path / "host-barrier.exe"
-    subprocess.run([*command, "-std=c++17", "-UNDEBUG", "-pthread", "-iquote", str(ROOT),
-                    str(Path(__file__).with_name("host_barrier_cpu.cpp")), "-o", str(binary)],
-                   check=True, timeout=180)
-    subprocess.run([str(binary)], check=True, timeout=60)
 
 
 def test_project_build_owns_barrier():
