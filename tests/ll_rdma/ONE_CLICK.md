@@ -2,7 +2,7 @@
 
 > 当前count源已隔离，SendCnt无quiet；默认身份30、直方图身份31。旧身份及立即quiet描述为历史。见[COUNT_SOURCE_ISOLATION.md](COUNT_SOURCE_ISOLATION.md)。
 
-> 默认身份28；新增`DEEPEP_LL_COUNT_HISTOGRAM=ON`硬件直方图实验身份29，必须完整重编，见[COUNT_HISTOGRAM_AB.md](COUNT_HISTOGRAM_AB.md)。OFF/ON不能混装。
+> count 统一使用硬件直方图，原`DEEPEP_LL_COUNT_HISTOGRAM`编译开关已移除；编译身份固定35，必须完整重编。
 >
 > 默认协议28：已移除两机/EP32专限，支持现有EP16/32/64/128/256入口，新增`--num-nodes`。
 > 多机count按远端rank分核/分轮直发；首跳按目标主机mask独立选择。变更清单及风险见

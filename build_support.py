@@ -260,7 +260,6 @@ def build_configuration(environment=None):
 
     result["ll_stage_timer"] = enabled("DEEPEP_LL_STAGE_TIMER", env)
     result["ll_reference_profile"] = enabled("DEEPEP_LL_REFERENCE_PROFILE", env)
-    result["ll_count_histogram"] = enabled("DEEPEP_LL_COUNT_HISTOGRAM", env)
     if result["ll_stage_timer"] and result["ll_reference_profile"]:
         raise RuntimeError("DEEPEP_LL_REFERENCE_PROFILE and DEEPEP_LL_STAGE_TIMER are mutually exclusive")
     result["ll_rdma"] = ndr_rdma_enabled(env)
@@ -471,7 +470,6 @@ class CMakeBuild(build_ext):
             f"-DDEEPEP_DEVICE_JOBS={jobs}",
             f"-DDEEPEP_LL_STAGE_TIMER={'ON' if configuration.get('ll_stage_timer', False) else 'OFF'}",
             f"-DDEEPEP_LL_REFERENCE_PROFILE={'ON' if configuration.get('ll_reference_profile', False) else 'OFF'}",
-            f"-DDEEPEP_LL_COUNT_HISTOGRAM={'ON' if configuration.get('ll_count_histogram', False) else 'OFF'}",
             f"-DPython_EXECUTABLE={sys.executable}",
             f"-Dpybind11_DIR={pybind11.get_cmake_dir()}",
             f"-DCMAKE_CXX_COMPILER={configuration['compiler_path']}",

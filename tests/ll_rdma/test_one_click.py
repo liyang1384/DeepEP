@@ -159,10 +159,8 @@ def test_bad_shape_rejected_before_any_preparation(tokens, monkeypatch):
 
 @pytest.mark.parametrize("mode", ["perf", "reference"])
 @pytest.mark.parametrize("nodes", [1, 2, 4, 8, 16])
-@pytest.mark.parametrize("histogram", [False, True])
-@pytest.mark.parametrize("fault", [None, "timer", "source", "sdk", "firmware", "library", "branch", "protocol", "qps", "reference", "reference_metadata", "group", "histogram"])
-def test_installed_check_rejects_stale_or_mixed_builds(tmp_path, monkeypatch, mode, nodes, histogram, fault):
-    monkeypatch.setenv('DEEPEP_LL_COUNT_HISTOGRAM', 'ON' if histogram else 'OFF')
+@pytest.mark.parametrize("fault", [None, "timer", "source", "sdk", "firmware", "library", "branch", "protocol", "qps", "reference", "reference_metadata", "group"])
+def test_installed_check_rejects_stale_or_mixed_builds(tmp_path, monkeypatch, mode, nodes, fault):
     root = tmp_path / "project"
     root.mkdir()
     (root / "dependencies.lock.json").write_text('{"shmem":{"revision":"sdk"}}')
@@ -172,13 +170,12 @@ def test_installed_check_rejects_stale_or_mixed_builds(tmp_path, monkeypatch, mo
     info = {"source_sha256": "source", "shmem": {"revision": "sdk", "build": dict(sdk["build"])},
             "ll_stage_timer": mode == "timer", "ll_reference_profile": (mode == "reference") != (fault == "reference_metadata")}
     if fault == "source": info["source_sha256"] = "old"
-    info['ll_count_histogram'] = histogram != (fault == 'histogram')
     if fault == "sdk": info["shmem"]["revision"] = "old"
     if fault == "firmware": info["shmem"]["build"]["hns_1825_pi_on_chip"] = 1
     (package / "_build_info.json").write_text(json.dumps(info))
     native = SimpleNamespace(
         low_latency_implementation="wrong" if fault == "branch" else "ndr-hns1825",
-        low_latency_core_protocol=11 if fault == "protocol" else (35 if histogram else 34), low_latency_rdma_enabled=True,
+        low_latency_core_protocol=11 if fault == "protocol" else 35, low_latency_rdma_enabled=True,
         low_latency_core_config=lambda: {"active_aiv": 56},
         low_latency_roce_qps_per_peer=4 if fault == "qps" else 0,
         low_latency_stage_timer_enabled=(mode == "timer") != (fault == "timer"),

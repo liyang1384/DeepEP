@@ -48,12 +48,12 @@ CPU整体回归449项通过、2项Torch缺失跳过；新增回传模型最初�
 
 ## 目标机测试
 
-全rank更新当前完整wheel，默认身份34、DEEPEP_LL_COUNT_HISTOGRAM=ON时身份35。
-保持相同histogram值比较4c12865与当前版，不混装不同身份/源码。两机NODE=0/1，MASTER为节点0地址：
+全rank更新当前完整wheel，编译身份固定35。
+保持相同 SDK、shape 与采样方式比较4c12865与当前版，不混装不同身份/源码。两机NODE=0/1，MASTER为节点0地址：
 
 ```bash
 git fetch origin && git switch kernel/ll-ndr-ab-per-core-qp && git pull --ff-only &&
-DEEPEP_LL_COUNT_HISTOGRAM=OFF bash tests/ll_rdma/one_click.sh "$NODE" "$MASTER" full-stage-combine-001 \
+bash tests/ll_rdma/one_click.sh "$NODE" "$MASTER" full-stage-combine-001 \
   --mode perf --tokens 1 8 32 256 --capacity 256 --hidden 3584 --topk 8 --experts 384 --dtype fp8
 ```
 

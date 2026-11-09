@@ -8,9 +8,7 @@
 #include "ll_transport.h"
 #include "ll_count_frame_transport.h"
 #include "ll_count_frame_receive.h"
-#ifdef DEEPEP_LL_COUNT_HISTOGRAM
 #include "ll_count_histogram.h"
-#endif
 #include "../common/ll_count_frame_layout.h"
 #include "../common/ll_count_assignment.h"
 #include "../common/ll_reference_profile_device.h"
@@ -277,26 +275,14 @@ __aicore__ inline void ServerDedupCounts::CountRemoteRank(uint32_t first, LocalT
     Duplicate<int32_t>(frame, 0, frameRecords * UB_ALIGN_DATA_COUNT);
     PipeBarrier<PIPE_V>();
     Duplicate<int32_t>(frame, 0x3f800000, flagMask, frameRecords / 8U, 1U, 8U);
-#ifdef DEEPEP_LL_COUNT_HISTOGRAM
     auto histogram = dstExpBuf_.Get<uint16_t>();
-    CountRankHistogram(validExpertIdsTensor_, subExpBuf_.Get<int32_t>(), histogram,
-                       expertIdsCnt_, first, moeExpertNumPerRank_);
+    histogram_accumulate_u16(reinterpret_cast<__ubuf__ int32_t*>(validExpertIdsTensor_.GetPhyAddr()),
+                             reinterpret_cast<__ubuf__ uint16_t*>(histogram.GetPhyAddr()),
+                             static_cast<int>(expertIdsCnt_), static_cast<int>(first),
+                             static_cast<int>(moeExpertNumPerRank_));
     SyncFunc<HardEvent::V_S>();
     for (uint32_t i = 0; i < moeExpertNumPerRank_; ++i)
         frame.SetValue(i * UB_ALIGN_DATA_COUNT + 1U, int32_t(histogram.GetValue(i + 1U)));
-#else
-    LocalTensor<uint8_t> mask = subExpBuf_.Get<uint8_t>();
-    LocalTensor<int32_t> selected = dstExpBuf_.Get<int32_t>();
-    for (uint32_t i = 0; i < moeExpertNumPerRank_; ++i) {
-        Compares(mask, validExpertIdsTensor_, int32_t(first + i), CMPMODE::EQ, expertIdsCnt_);
-        PipeBarrier<PIPE_V>();
-        uint64_t matches = 0;
-        GatherMask(selected, validExpertIdsTensor_, mask.ReinterpretCast<uint32_t>(), true, expertIdsCnt_,
-                   {1U, 1U, 0U, 0U}, matches);
-        SyncFunc<HardEvent::V_S>();
-        frame.SetValue(i * UB_ALIGN_DATA_COUNT + 1U, int32_t(matches));
-    }
-#endif
 }
 
 // 摘要：向量筛选本核专家区间内的路由，再用直方图生成每专家的 ready 标记和计数。

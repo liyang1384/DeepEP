@@ -15,7 +15,7 @@ helpers = runpy.run_path(str(ROOT / "tests/elastic/test_dispatch.py"))
 package = helpers["_import_installed_deep_ep"]()
 from deep_ep._native import require_native
 native = require_native("RDMA build capability check")
-assert native.low_latency_core_protocol == (35 if os.environ.get("DEEPEP_LL_COUNT_HISTOGRAM", "OFF") == "ON" else 34)
+assert native.low_latency_core_protocol == 35
 assert native.low_latency_roce_qps_per_peer == 0
 for p in (16, 32, 64, 128, 256):
     assert native.low_latency_ranks_per_group(p) == (4 if p <= 16 else 16)

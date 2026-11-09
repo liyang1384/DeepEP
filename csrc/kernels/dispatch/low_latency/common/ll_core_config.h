@@ -2,11 +2,7 @@
 #define DEEPEP_LL_CORE_CONFIG_H
 #include <cstdint>
 namespace DispatchDedup {
-#ifdef DEEPEP_LL_COUNT_HISTOGRAM
-constexpr uint32_t kLlCoreProtocolVersion = 35U; // same wire, distinct histogram build identity
-#else
-constexpr uint32_t kLlCoreProtocolVersion = 34U; // multi-host direct counts and independent per-host first hops
-#endif
+constexpr uint32_t kLlCoreProtocolVersion = 35U; // multi-host direct counts with the hardware count histogram
 // Capacity is not participation. Pure AIV launches use the queried even count.
 constexpr uint32_t kLlMaxCoreNum = 72U;
 constexpr uint32_t kLlMaxRecvCoreNum = kLlMaxCoreNum / 2U;

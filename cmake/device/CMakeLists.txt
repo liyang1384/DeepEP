@@ -49,9 +49,6 @@ endif()
 add_library(deepep_kernels SHARED $<TARGET_OBJECTS:${_ll_variant}>)
 
 add_library(deepep_kernel_options INTERFACE)
-if(DEEPEP_LL_COUNT_HISTOGRAM)
-    target_compile_definitions(deepep_kernel_options INTERFACE DEEPEP_LL_COUNT_HISTOGRAM=1)
-endif()
 target_compile_options(deepep_kernel_options INTERFACE "$<$<NOT:$<CONFIG:Debug>>:-O2>" -xasc --npu-arch=dav-3510
     --cce-auto-infer-kernel-type=false
     "-ffile-prefix-map=${DEEPEP_SOURCE_DIR}=."

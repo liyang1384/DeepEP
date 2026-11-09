@@ -46,8 +46,6 @@ def parse_args(argv=None):
     p.add_argument("--plan", action="store_true", help="CPU plan only; no download/build/venv/device launch")
     p.add_argument("--identity-output", type=Path, help=argparse.SUPPRESS)
     a = p.parse_args(argv)
-    if os.environ.get("DEEPEP_LL_COUNT_HISTOGRAM", "OFF") not in ("ON", "OFF"):
-        p.error("DEEPEP_LL_COUNT_HISTOGRAM must be ON or OFF (compile-time option)")
     if a.num_nodes < 1 or not 0 <= a.node_rank < a.num_nodes:
         p.error("node_rank must be in [0, num_nodes), with positive num_nodes")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", a.run_name):
@@ -177,12 +175,10 @@ def installed_identity(a):
     if (info.get("shmem", {}).get("revision") != lock["revision"] or
             info.get("shmem", {}).get("build") != sdk["build"]):
         raise RuntimeError("Installed wheel and current SHMEM SDK identity differ; rebuild the wheel")
-    histogram = os.environ.get("DEEPEP_LL_COUNT_HISTOGRAM", "OFF") == "ON"
-    expected_protocol = 35 if histogram else 34
+    expected_protocol = 35
     if (getattr(native, "low_latency_implementation", None) != "ndr-hns1825"
-            or native.low_latency_core_protocol != expected_protocol
-            or info.get("ll_count_histogram", False) != histogram):
-        raise RuntimeError(f"Installed wheel does not match count histogram={histogram}, protocol={expected_protocol}; rebuild the complete wheel")
+            or native.low_latency_core_protocol != expected_protocol):
+        raise RuntimeError(f"Installed wheel does not match protocol={expected_protocol}; rebuild the complete wheel")
     if not native.low_latency_rdma_enabled or bool(native.low_latency_stage_timer_enabled):
         raise RuntimeError("Installed RDMA/timer capability does not match the requested mode")
     if getattr(native, 'low_latency_roce_qps_per_peer', None) != 0:
@@ -214,7 +210,7 @@ def installed_identity(a):
     shared_args[shared_args.index("--node-rank") + 1] = "<node>"
     return {"schema": 1, "project_root": str(ROOT.resolve()), "git_revision": revision,
             "source_sha256": fingerprint, "sdk_revision": lock["revision"], "sdk_build": sdk["build"],
-            "core_protocol": expected_protocol, "count_histogram": histogram,
+            "core_protocol": expected_protocol,
             "roce_qps_per_peer": native.low_latency_core_config()["active_aiv"], "timer_schema": 3, "reference_profile": reference,
             "reference_profile_schema": 4 if reference else None, "mode": a.mode, "arguments": shared_args}
 

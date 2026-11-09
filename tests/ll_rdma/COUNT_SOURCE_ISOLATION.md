@@ -59,10 +59,10 @@ count TX在本核结束前已退休；下次调用与shape变化不会覆盖未�
 
 ```bash
 git fetch origin && git switch kernel/ll-ndr-ab-per-core-qp && git pull --ff-only &&
-DEEPEP_LL_COUNT_HISTOGRAM=OFF bash tests/ll_rdma/one_click.sh "$NODE" "$MASTER" count-isolated-001 \
+bash tests/ll_rdma/one_click.sh "$NODE" "$MASTER" count-isolated-001 \
   --mode perf --tokens 1 8 32 256 --capacity 256 --hidden 3584 --topk 8 --experts 384 --dtype fp8
 ```
 
-对照ec15f2e保持同一histogram值、SDK、shape/seed/采样方式。逐核诊断另用新run名及
+对照ec15f2e保持同一SDK、shape/seed/采样方式。逐核诊断另用新run名及
 `--mode reference --reference-iters 5`；同时看count_send、最终drain和完整OFF dispatch。
 原始数据留目标机，单个回传报告仍<=60000字节。
