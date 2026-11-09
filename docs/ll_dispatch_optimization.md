@@ -88,8 +88,8 @@ w48 receive_first_hop_tokens  w49 receive_relay_members
 
 | 编号 | 优化点 | 做法 | 依据 | 预期 | 状态 |
 |---|---|---|---|---|---|
-| D1 | **relay 去复制** | 同一份 payload 只落一份（每 `(source,dest-host)` 到达区），各专家槽只存 `(source,q)` 引用；consume 按引用读一次再散写 | `w34 ≈ 5.8 + 1.1×w49`，`w49` 0~12，`w37`/`w41` 无关；`w49-w62` 才是可省次数 | `w34` max 19→~6，`receiver` 24.7→**~13**，R kernel→~33 | 探针 `w62 receive_relay_distinct_ranks` 已加，待一轮打点确认前提 |
-| D2 | 同 record 多 token 合并搬运 | 同一 record 的 q 个 token 在 peerMem 连续，一次 n-burst `DataCopy` 替代每 token 一次 `DataCopyPad` | 现在每 token 一次 4KB 拷贝 | −1~3µs | 待做 P2 |
+| D1 | **relay 去复制** | 同一份 payload 只落一份（每 `(source,dest-host)` 到达区），各专家槽只存 `(source,q)` 引用；consume 按引用读一次再散写 | `w34 ≈ 5.8 + 1.1×w49`，`w49` 0~12；但实测 `w49 − w62 = 0` | 原预期 `w34` max 19→~6，实际 **0** | **否决**：`w62` 实测 w49−w62 全 28 核为 0（Σ 96 = 96），成员天然分散到不同 target rank，无重复扇出；1.1µs/成员是必要拷贝成本 |
+| D2 | 同 record 多 token 合并搬运 | 同一 record 的 q 个 token 在 peerMem 连续，一次 n-burst `DataCopy` 替代每 token 一次 `DataCopyPad` | 每 record token 数 λ = bs×k/384；bs=32 时 λ=0.67，且交错映射让同 record 行步长 28 | bs=32 下 ≤0.5µs；回退 B3 净亏 4.5µs | **当前不做**，bs≥128（λ≥2.7）再评估 |
 | D3 | 消费顺序 token 行序 → record 序 | 同 record 连续到达、写同一 region | 减少稀疏批次的固定开销 | −1~3µs | 待做 P2 |
 | D4 | `recv_tasks` 二分改前向扫描 | 交错后行号跨步 28，二分 9 步 | 实测 0.44→2.0µs | −1µs | 待做 P3 |
 | D5 | `ClearFlags` 与 consume 重叠 | 增量清 / 延迟到窗口下次复用 | 实测仅 0.5~0.9µs | — | 降级 |
@@ -110,7 +110,7 @@ w48 receive_first_hop_tokens  w49 receive_relay_members
 |---|---|---|---|---|---|
 | F1 | payload 读侧走 L2 | 去掉 `IssueLoad` 的 hint | 流式读（4KB×9/核），污染 L2 挤掉计数记录 | `w33`+1.2、`w34`+1.1、`receiver`+3.1 | **已回退** `f00fa1c` |
 | F2 | flag 保持与 payload 同视图 | `ReadServerDedupFlags` / `ClearFlags` 与 payload 一致绕 L2 | 二者同事务写入 | — | 保持 |
-| F3 | flag 粒度每 480B → 每 N token | 一条 record 的连续 token 共享一个 marker | wire 开销 6.25%→0.8%，flag 写/清 ↓16× | −2~4µs | 待做 P2 |
+| F3 | flag 粒度每 480B → 每 N token | — | `Probe` 对整包**所有** block 的 32B flag 求和，只有 `sum == blocks*8` 才算整包到齐；代码明确要求 "Never reduce this to the first flag"。粗粒度后 flag 只能证明某个 512B 单元到，MTE relay 分批 burst 时甚至可能后段先可见 | 0（重估后只剩 ≤1~2µs 指令数） | **否决** |
 
 ### G. 工具与采样
 
@@ -191,14 +191,12 @@ w48 receive_first_hop_tokens  w49 receive_relay_members
 | 接收任务映射 | `33cc038` 起改为**等步长交错** | 已解决"整段继承晚到源"；`receiver` 极差减半 |
 | relay 量分布 | 交错后 `w49` 仍 0~12（Σ=96，均值 3.4） | 只有 ~9 个 token/核，成员数在分配时不可知 → 需要发送端发布或消除复制 |
 
-### 待做：relay 去复制（当前最高优先）
+### 已否决：relay 去复制
 
 - 现象：`w34 ≈ 5.8 + 1.1 × w49`（µs），relay 成员数是 consume 唯一解释量；`w37`/`w41` 与 `w34` 无关。
-- 前提待确认：relay 成员是 `Packet(...)` 把 UB 里的 `wire` 写到目标 rank 的专家槽，属于必要落地。只有当多个成员指向**同一 destinationRank**（只是 expert 不同）时，才能改成"写一次 + 目标 rank 本地散写"。
-- 判据：`w49 - w62`（`w62 = receive_relay_distinct_ranks`）即可省次数；按最慢核算 `(w49max - w62max) × 1.1µs ≥ 3µs` 才值得动协议，否则 D1 直接否决。
-- 做法：同一份 payload 只落一份（per `(source, dest-host)` 到达区），各专家槽只存 `(source, q)` 引用；consume 时按引用读一次、再散写到 `expandX`。
-- 预期：`w34` 最大 19 → **~6**，`receiver` 24.7 → **~13**，R kernel → **~33**。
-- 风险：改动 consume 读路径与 relay 语义（相当于把 host 内去重从 dest 侧移到消费侧），属协议级；需保证 `ClearFlags`、窗口复用、magic 交替仍然正确。
+- 实测：`w62 receive_relay_distinct_ranks` 与 `w49` **逐核相等**（28 核差值全为 0，Σ = 96，max = 12）。同一 first-hop token 的成员都落在**不同**目标 rank 上，不存在"写进同一 rank 多个专家槽"的重复。
+- 结论：`Packet(...)` 的 1.1µs/成员是必要拷贝成本，D1 的理论收益为 0，**否决**，不再动协议。
+- 仍可压的只剩"每次拷贝的字节与指令数"：D2（同 record 多 token 合并成 n-burst）、F3（flag 粒度降 16×，wire 开销 6.25%→0.8%）。D6（成员合并搬运）同样不成立——成员分属不同 peer 映射，无法并成一次 burst。
 
 ---
 
@@ -268,10 +266,11 @@ count_complete(1.0~3.0)   WaitCumSumFlag 转置屏障 + receiver0 写 expertToke
 
 | 优先级 | 编号 | 理由 |
 |---|---|---|
-| **P1** | D1（relay 去复制） | 唯一还剩 8µs 量级的项，直接决定 R 侧长尾；先跑 `w62` 确认 `w49 > w62` |
-| **P2** | E1（先用 word 75 判定）→ B5 / D2 / D3 / F3 | 都在 2~5µs，且互相不冲突 |
-| **P3** | A1 / C6 / D4 / G3 / B6 | 单项 1~3µs，或属诊断完善 |
-| 不做 | A3 / A4 / A5 / C5 / E3 / F1 / D5 / E2 | 原因见 §3 |
+| **P0** | 基线稳定化（不改代码，同环境连跑 2~3 轮取均值） | 本轮仅换环境，`count_ready_poll` 就从 6.18 变成 17.19、`kernel` max 44.3→58.0，抖动已大于任何剩余单项 |
+| **P1** | B6（发送按 `(token, destination)` 组均分） | 现状 4 核拿 2 token=16 包、其余 8 包，`send_packets` 17.5 vs 11；均分后最后一批下发提前 ~6µs，同时缩短 R 侧 packet 等待（`w33` 5.5、`recv_first_packet` 4） |
+| **P2** | B5 / D3 / C6 | 2~5µs，互不冲突 |
+| **P3** | A1 / D4 / G3 / E1（S 非限值） | 单项 1~3µs，或属诊断完善 |
+| 不做 | D1 / D2 / D6 / F3 / A3 / A4 / A5 / C5 / D5 / E2 / E3 / F1 | 原因见 §3 与 §5 |
 
 ---
 
