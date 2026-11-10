@@ -47,27 +47,18 @@ __aicore__ inline void DirectCountFrame(const __gm__ Args* args, uint32_t peer,
     Sync<HardEvent::MTE3_S>(7U);
     Put(args,peer,Address(args,peer,frameOffset),stage,bytes,scratch);
 }
-// One contiguous body plus one separate 32B commit. The receiver must not read
-// body ready/count words until it has acquired the frame commit.
+// One contiguous body plus one separate 32B commit, both written straight into
+// the source host's peer memory. CountAssignment clamps the record range to
+// same-host source ranks, so this never needs the RDMA path.
 __aicore__ inline void CountFrame(const __gm__ Args* args, uint32_t peer,
                                  uint64_t frameOffset, uint64_t commitOffset,
-                                 LocalTensor<uint8_t> records, uint32_t count, LocalTensor<uint8_t> scratch) {
+                                 LocalTensor<uint8_t> records, uint32_t count) {
     Check(args, peer, frameOffset, uint64_t(count)*32U);
     Check(args, peer, commitOffset, 32U);
     auto dst=Address(args,peer,frameOffset);
     auto commit=Address(args,peer,commitOffset);
-    if (!RemoteWrite(args,peer)) {
-        DataCopy(Tensor(dst,Rdma(args)),records,count*32U);
-        Sync<HardEvent::MTE3_S>(7U);
-        DataCopy(Tensor(commit,Rdma(args)),records,32U);
-        return;
-    }
-    auto stage=Stage(args,count*32U);
-    DataCopy(Tensor(stage,true),records,count*32U);
+    DataCopy(Tensor(dst,Rdma(args)),records,count*32U);
     Sync<HardEvent::MTE3_S>(7U);
-    Put(args,peer,dst,stage,count*32U,scratch);
-    Quiet(peer,scratch);
-    Put(args,peer,commit,stage,32U,scratch);
-    Quiet(peer,scratch);
+    DataCopy(Tensor(commit,Rdma(args)),records,32U);
 }
 }
