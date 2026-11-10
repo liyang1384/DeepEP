@@ -124,16 +124,10 @@ private:
         start = core * base + (core < remainder ? core : remainder);
         end = start + count;
     }
-    // 摘要：对原始路由执行逐专家匹配与归约，得到该专家的路由条数。
-    __aicore__ inline void CalTokenSendExpertCnt(uint32_t dstExpertId, int32_t calCnt, int32_t& curExpertCnt);
     // 摘要：将专家计数按目标 rank 分组，写到远端“本地专家 × 来源 rank”的 32B 记录槽。
     __aicore__ inline void SendExpertCntRange(uint32_t start, uint32_t end);
-    // 摘要：向量筛选本核专家区间内的路由，再用直方图生成每专家的 ready 标记和计数。
-    __aicore__ inline void CountByVectorRange(uint32_t start, uint32_t end, uint32_t maskBytes);
-    // Remote rank: Vector equality + GatherMask count, no per-route Scalar loop.
-    __aicore__ inline void CountRemoteRank(uint32_t first, LocalTensor<int32_t> frame, uint32_t frameRecords);
-    // 摘要：逐个专家扫描路由并计算计数，作为小规模输入的统计路径。
-    __aicore__ inline void CountByExpert(uint32_t start, uint32_t end);
+    // 摘要：清零槽位并批量打 ready，再用硬件直方图回填 count；本机专家区间与跨机远端 rank 共用。
+    __aicore__ inline void CountSlots(LocalTensor<int32_t> records, uint32_t first, uint32_t bins);
     // 摘要：清除本核已收取记录的 ready 标记，保留计数字段，为后续窗口复用做准备。
     __aicore__ inline void WaitDispatchClearStatus();
     // 摘要：提取计数字段，计算本片累计前缀，并向其他接收核发布本片总数。
@@ -173,12 +167,12 @@ private:
     GlobalTensor<int64_t> expertTokenNumsOutGMTensor_;
     GlobalTensor<float> windowInstatusFp32Tensor_, selfRankWinInGMTensor_;
     LocalTensor<int32_t> statusTensor_, validExpertIdsTensor_;
-    LocalTensor<float> workLocalTensor_, statusFp32Tensor_, statusCleanFp32Tensor_;
+    LocalTensor<float> statusFp32Tensor_, statusCleanFp32Tensor_;
     // Both views outlive all their tensors. The record buffer is outside their
     // shared address range and remains immutable until the phase is retired.
     TBufPool<TPosition::VECCALC, 16> stagePool_;
     TBufPool<TPosition::VECCALC, 5> countPool_;
-    TBuf<> expertIdsBuf_, dstExpBuf_, subExpBuf_, workBuf_, statusBuf_, histogramBuf_;
+    TBuf<> expertIdsBuf_, dstExpBuf_, workBuf_, statusBuf_;
     TBuf<> waitStatusBuf_, gatherMaskOutBuf_, sumCoreBuf_, sumLocalBuf_, sumContinueBuf_, scalarBuf_;
     TBuf<> prefixBuf_, readyBuf_, cleanBuf_, tokenNumBuf_;
 };
@@ -200,32 +194,29 @@ __aicore__ inline void ServerDedupCounts::SendCnt()
     tpipe_->InitBufPool(stagePool_, kEpServerDedupCountUbBytes - ReservedBytes());
     if (count == 0U && !remoteOwner) return;
 
-    // 3. 为完整 bs×topK 路由及筛选/归约临时数据分配 UB，等待 GM 路由搬入。
+    // 3. 为完整 bs×topK 路由及直方图临时数据分配 UB，等待 GM 路由搬入。
     const uint32_t routeBytes = Ceil(expertIdsCnt_ * sizeof(int32_t), SIZE_ALIGN_256) * SIZE_ALIGN_256;
     const uint32_t remoteBytes = assignment.remoteRecords * UB_ALIGN;
     const uint32_t workBytes = routeBytes < remoteBytes ? remoteBytes : routeBytes;
-    tpipe_->InitBufPool(countPool_, 3U * routeBytes + workBytes + statusCntAlign_ * sizeof(int32_t), stagePool_);
+    tpipe_->InitBufPool(countPool_, 2U * routeBytes + workBytes, stagePool_);
     countPool_.InitBuffer(expertIdsBuf_, routeBytes);
     countPool_.InitBuffer(dstExpBuf_, routeBytes);
-    countPool_.InitBuffer(subExpBuf_, routeBytes);
     countPool_.InitBuffer(workBuf_, workBytes);
-    if (statusCntAlign_) countPool_.InitBuffer(histogramBuf_, statusCntAlign_ * sizeof(int32_t));
     validExpertIdsTensor_ = expertIdsBuf_.Get<int32_t>();
-    workLocalTensor_ = workBuf_.Get<float>();
     if (count) statusTensor_ = statusBuf_.Get<int32_t>();
     const DataCopyExtParams idsCopy{1U, expertIdsCnt_ * uint32_t(sizeof(int32_t)), 0U, 0U, 0U};
     const DataCopyPadExtParams<int32_t> pad{false, 0U, 0U, 0};
     DataCopyPad(validExpertIdsTensor_, expertIdsGMTensor_, idsCopy, pad);
     SyncFunc<HardEvent::MTE2_V>();
     if (remoteOwner) {
-        auto remoteFrame = workBuf_.Get<int32_t>();
+        auto remoteFrame = workBuf_.Get<int32_t>();  
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
         uint32_t firstFrameIssued = 0U;
 #endif
         for (uint32_t task = aivId_; task < epWorldSize_ - kLlPhysicalRanksPerHost; task += coreNum_) {
             const uint32_t destination = CountRemotePeer(epRankId_, epWorldSize_, task);
             const uint32_t first = destination * moeExpertNumPerRank_;
-            CountRemoteRank(first, remoteFrame, assignment.remoteRecords);
+            CountSlots(remoteFrame, first, moeExpertNumPerRank_);
             SyncFunc<HardEvent::S_MTE3>();
             const auto frame = CountFrame(rscvStatusNum_, epWorldSize_, cores,
                                           destination, epRankId_, 0U, true);
@@ -246,15 +237,8 @@ __aicore__ inline void ServerDedupCounts::SendCnt()
         }
     }
 
-    // 4. 规模足够时先向量筛选本核专家区间再做直方图；小输入逐专家统计。
-    // 两条路径都写 ready=1 和真实 count，零计数专家也发布，避免对端永久等待。
-    const uint32_t maskBytes = Ceil(Ceil(expertIdsCnt_, 8U), UB_ALIGN) * UB_ALIGN;
-
-    if (count && expertIdsCnt_ >= SIZE_ALIGN_256 / sizeof(int32_t) && 2U * maskBytes <= routeBytes) {
-        CountByVectorRange(start, end, maskBytes);
-    } else if (count) {
-        CountByExpert(start, end);
-    }
+    // 4. 本机专家区间统一走硬件直方图；零计数专家也发布 ready=1 和 count=0，避免对端永久等待。
+    if (count) CountSlots(statusTensor_, start, end - start);
 
     // 5. Scalar 填好的记录通过 MTE3 写到目标专家所属 rank。
     // 此处仅下发，不全量等待：statusBuf_ 保持不变，而筛选临时 UB 可以交给后续阶段。
@@ -265,68 +249,23 @@ __aicore__ inline void ServerDedupCounts::SendCnt()
     // Keeping the pipe also preserves Init's CTRL[60] through FP8 quantization.
 }
 
-// All experts of one remote rank share one frame. GatherMask's hardware count
-// supplies the multiplicity; Scalar only emits one result per expert. The
-// existing route/mask/output/work buffers are reused and retired before payload.
-__aicore__ inline void ServerDedupCounts::CountRemoteRank(uint32_t first, LocalTensor<int32_t> frame,
-                                                       uint32_t frameRecords)
+// 本机专家区间与跨机远端 rank 共用：清零对齐槽、批量打 ready，再用一次硬件直方图回填 count。
+// 只初始化 ceil(bins/8)*8 个槽；超出真实 bins 的 padding 不会离开 UB。
+__aicore__ inline void ServerDedupCounts::CountSlots(LocalTensor<int32_t> records, uint32_t first, uint32_t bins)
 {
     uint64_t flagMask[2] = {0x0101010101010101ULL, 0ULL};
-    Duplicate<int32_t>(frame, 0, frameRecords * UB_ALIGN_DATA_COUNT);
+    const uint32_t slots = (bins + 7U) / 8U * 8U;
+    Duplicate<int32_t>(records, 0, slots * UB_ALIGN_DATA_COUNT);
     PipeBarrier<PIPE_V>();
-    Duplicate<int32_t>(frame, 0x3f800000, flagMask, frameRecords / 8U, 1U, 8U);
+    Duplicate<int32_t>(records, 0x3f800000, flagMask, slots / 8U, 1U, 8U);
     auto histogram = dstExpBuf_.Get<uint16_t>();
     histogram_accumulate_u16(reinterpret_cast<__ubuf__ int32_t*>(validExpertIdsTensor_.GetPhyAddr()),
                              reinterpret_cast<__ubuf__ uint16_t*>(histogram.GetPhyAddr()),
                              static_cast<int>(expertIdsCnt_), static_cast<int>(first),
-                             static_cast<int>(moeExpertNumPerRank_));
+                             static_cast<int>(bins));
     SyncFunc<HardEvent::V_S>();
-    for (uint32_t i = 0; i < moeExpertNumPerRank_; ++i)
-        frame.SetValue(i * UB_ALIGN_DATA_COUNT + 1U, int32_t(histogram.GetValue(i + 1U)));
-}
-
-// 摘要：向量筛选本核专家区间内的路由，再用直方图生成每专家的 ready 标记和计数。
-__aicore__ inline void ServerDedupCounts::CountByVectorRange(uint32_t start, uint32_t end, uint32_t maskBytes)
-{
-    LocalTensor<int32_t> histogram = histogramBuf_.Get<int32_t>();
-    LocalTensor<int32_t> selected = dstExpBuf_.Get<int32_t>();
-    LocalTensor<uint8_t> lower = subExpBuf_.Get<uint8_t>();
-    LocalTensor<uint8_t> upper = lower[maskBytes];
-    Duplicate<int32_t>(statusTensor_, 0, statusCntAlign_ * UB_ALIGN_DATA_COUNT);
-    Duplicate<int32_t>(histogram, 0, statusCntAlign_);
-    Compares(lower, validExpertIdsTensor_, int32_t(start), CMPMODE::GE, expertIdsCnt_);
-    Compares(upper, validExpertIdsTensor_, int32_t(end), CMPMODE::LT, expertIdsCnt_);
-    PipeBarrier<PIPE_V>();
-    And(lower.ReinterpretCast<uint16_t>(), lower.ReinterpretCast<uint16_t>(), upper.ReinterpretCast<uint16_t>(),
-        int32_t(maskBytes / sizeof(uint16_t)));
-    PipeBarrier<PIPE_V>();
-    uint64_t selectedCount = 0;
-    GatherMask(selected, validExpertIdsTensor_, lower.ReinterpretCast<uint32_t>(), true, expertIdsCnt_,
-               {1U, 1U, 0U, 0U}, selectedCount);
-    SyncFunc<HardEvent::V_S>();
-    for (uint32_t i = 0; i < selectedCount; ++i) {
-        const uint32_t record = uint32_t(selected.GetValue(i)) - start;
-        histogram.SetValue(record, histogram.GetValue(record) + 1);
-    }
-    for (uint32_t i = 0; i < end - start; ++i) {
-        statusTensor_.SetValue(i * UB_ALIGN_DATA_COUNT, 0x3f800000);
-        statusTensor_.SetValue(i * UB_ALIGN_DATA_COUNT + 1U, histogram.GetValue(i));
-    }
-}
-
-// 摘要：逐个专家扫描路由并计算计数，作为小规模输入的统计路径。
-__aicore__ inline void ServerDedupCounts::CountByExpert(uint32_t start, uint32_t end)
-{
-    uint64_t flagMask[2] = {0x0101010101010101ULL, 0ULL};
-    Duplicate<int32_t>(statusTensor_, 0, statusCntAlign_ * UB_ALIGN_DATA_COUNT);
-    PipeBarrier<PIPE_V>();
-    Duplicate<int32_t>(statusTensor_, 0x3f800000, flagMask, statusCntAlign_ / 8U, 1U, 8U);
-    SyncFunc<HardEvent::V_S>();
-    for (uint32_t expert = start; expert < end; ++expert) {
-        int32_t count = 0;
-        CalTokenSendExpertCnt(expert, expertIdsCnt_, count);
-        statusTensor_.SetValue((expert - start) * UB_ALIGN_DATA_COUNT + 1U, count);
-    }
+    for (uint32_t i = 0; i < bins; ++i)
+        records.SetValue(i * UB_ALIGN_DATA_COUNT + 1U, int32_t(histogram.GetValue(i + 1U)));
 }
 
 // 摘要：将专家计数按目标 rank 分组，写到远端“本地专家 × 来源 rank”的 32B 记录槽。
@@ -344,7 +283,7 @@ __aicore__ inline void ServerDedupCounts::SendExpertCntRange(uint32_t start, uin
                 useAllCoreCount_ ? coreNum_ : aivUsedCumSum_, dst, epRankId_, localExpert, directRanks_);
             if (frame.firstExpert != localExpert || frame.records != count) { Trap(); return; }
             LlTransport::CountFrame(args_, dst, stateOffset_ + frame.frameOffset, stateOffset_ + frame.commitOffset,
-                statusTensor_[(expert - start) * UB_ALIGN_DATA_COUNT].ReinterpretCast<uint8_t>(), count, workBuf_.Get<uint8_t>());
+                statusTensor_[(expert - start) * UB_ALIGN_DATA_COUNT].ReinterpretCast<uint8_t>(), count);
             expert += count;
             continue;
         }
@@ -422,36 +361,6 @@ __aicore__ inline void ServerDedupCounts::CompleteCumsum()
         DataCopyPad(expertTokenNumsOutGMTensor_, expertCounts, output);
     }
     // No listening table or payload receive/copy is constructed in this increment.
-}
-
-// 摘要：对原始路由执行逐专家匹配与归约，得到该专家的路由条数。
-__aicore__ inline void ServerDedupCounts::CalTokenSendExpertCnt(uint32_t dstExpertId, int32_t calCnt,
-                                                                int32_t& curExpertCnt)
-{
-    if (calCnt < axisK_) {
-        curExpertCnt = 0;
-        return;
-    }
-    LocalTensor<int32_t> dstExpIdTensor = dstExpBuf_.Get<int32_t>();
-    LocalTensor<int32_t> subExpIdTensor = subExpBuf_.Get<int32_t>();
-    Duplicate<int32_t>(dstExpIdTensor, dstExpertId, calCnt);
-    PipeBarrier<PIPE_V>();
-    Sub(subExpIdTensor, validExpertIdsTensor_, dstExpIdTensor, calCnt);
-    PipeBarrier<PIPE_V>();
-    LocalTensor<float> tmpFp32 = subExpIdTensor.ReinterpretCast<float>();
-    LocalTensor<float> tmpoutFp32 = dstExpIdTensor.ReinterpretCast<float>();
-    Abs(tmpoutFp32, tmpFp32, calCnt);
-    PipeBarrier<PIPE_V>();
-    Mins(subExpIdTensor, dstExpIdTensor, 1, calCnt);
-    PipeBarrier<PIPE_V>();
-    ReduceSum<float>(tmpoutFp32, tmpFp32, workLocalTensor_, calCnt);
-    SyncFunc<AscendC::HardEvent::V_S>();
-    int32_t curOtherExpertCnt = dstExpIdTensor(0);
-    if (calCnt >= curOtherExpertCnt) {
-        curExpertCnt = calCnt - curOtherExpertCnt;
-    } else {
-        curExpertCnt = 0;
-    }
 }
 
 // 摘要：清除本核已收取记录的 ready 标记，保留计数字段，为后续窗口复用做准备。

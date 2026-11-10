@@ -19,7 +19,7 @@ def test_remote_protocol_is_wired_consistently():
     send = block(source, 'void ServerDedupCounts::SendCnt()')
     assert 'CountAssignment(' in send and 'CountRemotePeer(' in send
     assert 'task += coreNum_' in send
-    assert 'CountRemoteRank(first, remoteFrame, assignment.remoteRecords);' in send
+    assert 'CountSlots(remoteFrame, first, moeExpertNumPerRank_);' in send
     assert 'LlTransport::DirectCountFrame' in send
     assert 'auto remoteFrame = workBuf_.Get<int32_t>();' in send
     assert 'moeExpertNumPerRank_, dstExpBuf_.Get<uint8_t>()' in send

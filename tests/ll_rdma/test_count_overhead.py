@@ -43,9 +43,9 @@ def test_direct_count_records_live_until_the_existing_reuse_barrier():
     send = _block(counts, "void ServerDedupCounts::SendCnt()")
     assert "routeExchange_" not in counts
     remote = _block(send, "if (remoteOwner)")
-    assert remote.index("CountRemoteRank(first,") < remote.index("LlTransport::DirectCountFrame")
+    assert remote.index("CountSlots(remoteFrame, first,") < remote.index("LlTransport::DirectCountFrame")
     assert remote.index("LlTransport::DirectCountFrame") < remote.index("SyncFunc<HardEvent::S_V>()")
-    assert send.index("LlTransport::DirectCountFrame") < send.index("CountByVectorRange(start, end, maskBytes)")
+    assert send.index("LlTransport::DirectCountFrame") < send.index("CountSlots(statusTensor_, start, end - start)")
     assert "Reset(" not in send
     assert "tpipe_->InitBuffer(statusBuf_, ReservedBytes())" in send
     assert "kEpServerDedupCountUbBytes - ReservedBytes()" in send
@@ -57,7 +57,7 @@ def test_direct_count_records_live_until_the_existing_reuse_barrier():
     consume = kernel.index("receiver_.Process(profile_);")
     assert "PipeBarrier<PIPE_ALL>();" in kernel[complete:consume]
     loaded = send.index("DataCopyPad(validExpertIdsTensor_, expertIdsGMTensor_")
-    assert "SyncFunc<HardEvent::MTE2_V>();" in send[loaded:send.index("CountRemoteRank(first,")]
+    assert "SyncFunc<HardEvent::MTE2_V>();" in send[loaded:send.index("CountSlots(remoteFrame, first,")]
 
 
 def test_shared_prefix_publication_and_consumers_keep_the_ready_dependency():
