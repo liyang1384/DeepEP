@@ -9,12 +9,8 @@ using namespace __cce_simd;
 
 /**
  *  for (int i = 0; i < num_i32_elems; ++ i)
- *      if (data[i] < offset)
- *          acc[0] ++;
- *      else if (data[i] < offset + num_bins)
+ *      if (offset <= data[i] and data[i] < offset + num_bins)
  *          acc[data[i] - offset + 1] ++;
- *      else
- *          acc[num_bins + 1] ++;
  */
 __simd_vf__ void histogram_accumulate_u16(__ubuf__ int32_t* data, __ubuf__ uint16_t* acc,
                                           const int num_i32_elems, const int offset, const int num_bins) {
