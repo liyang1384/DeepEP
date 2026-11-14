@@ -15,14 +15,14 @@ class DispatchRdmaBatch {
     uint32_t pendingPeer_ = 0U;
     uint64_t pendingOffset_ = 0U;
     uint32_t peerMask_[kPeerWords]{};
-    LocalTensor<uint8_t> pendingScratch_;
+    __ubuf__ uint8_t* pendingScratch_ = nullptr;
     bool staged_ = false;
     CountRetirement* countRetirement_ = nullptr;
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
     LlReferenceProfile::DeviceProfile* profile_ = nullptr;
     bool pendingSecond_ = false;
 #endif
-    __aicore__ inline void Retire(LocalTensor<uint8_t> scratch, bool secondTriggered) {
+    __aicore__ inline void Retire(__ubuf__ uint8_t* scratch, bool secondTriggered) {
         if (!count_) return;
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
         const uint64_t quietBegin = profile_ ? profile_->Clock() : 0U;
@@ -50,9 +50,9 @@ public:
     __aicore__ inline void SetProfile(LlReferenceProfile::DeviceProfile* p) { profile_ = p; }
 #endif
     __aicore__ inline void Init(const __gm__ Args* args, uint32_t bytes) {
-        if (count_) { Trap(); return; }
+        if (count_) { trap(); return; }
         args_ = args; bytes_ = bytes; count_ = 0;
-        if (!bytes || bytes % 512U || bytes > LlRdma::kCoreBytes) { Trap(); return; }
+        if (!bytes || bytes % 512U || bytes > LlRdma::kCoreBytes) { trap(); return; }
         const uint32_t slots = LlRdma::kCoreBytes / bytes_;
         capacity_ = slots; // use every complete packet slot in the 128KiB GM stage
         if (uint32_t(args_->rankSize) > DispatchDedup::kLlPhysicalRanksPerHost)
@@ -64,7 +64,7 @@ public:
     // copy or next remote staging. It may prepare the next packet first, using
     // a DIFFERENT lane. Single-lane callers select defer=false.
     __aicore__ inline void Enqueue(uint32_t peer, uint64_t offset,
-                                   LocalTensor<uint8_t> packet, bool defer = false) {
+                                   __ubuf__ uint8_t* packet, bool defer = false) {
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
         pendingSecond_ = profile_ && profile_->SecondRemote();
         if (profile_) profile_->SecondEnqueue();
@@ -72,8 +72,8 @@ public:
         Check(args_, peer, offset, bytes_);
         pendingStage_ = stageBase_ + uint64_t(count_) * bytes_;
         pendingPeer_ = peer; pendingOffset_ = offset; pendingScratch_ = packet;
-        DataCopy(Tensor(pendingStage_, true), packet, bytes_);
-        SetFlag<HardEvent::MTE3_S>(7U); // same event as the old immediate Sync
+        LlDispatchC::Store(pendingStage_, packet, bytes_, 1U, 0U, 0U, true);
+        asc_sync_notify(PIPE_MTE3, PIPE_S, EVENT_ID7);
         peerMask_[peer / 32U] |= 1U << (peer % 32U);
         ++count_; staged_ = true;
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
@@ -86,7 +86,7 @@ public:
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
         if (profile_) profile_->StageWaitBegin(pendingSecond_);
 #endif
-        WaitFlag<HardEvent::MTE3_S>(7U);
+        asc_sync_wait(PIPE_MTE3, PIPE_S, EVENT_ID7);
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
         if (profile_) { profile_->StageWaitEnd(pendingSecond_); profile_->SecondPutBegin(pendingSecond_); }
 #endif
@@ -105,9 +105,18 @@ public:
 #endif
         }
     }
-    __aicore__ inline void Flush(LocalTensor<uint8_t> scratch) {
+    __aicore__ inline void Flush(__ubuf__ uint8_t* scratch) {
         SubmitPending();
         Retire(scratch, false);
+    }
+    // Compatibility entry points for the separate, unchanged Combine tensor implementation.
+    template <class Buffer>
+    __aicore__ inline void Enqueue(uint32_t peer, uint64_t offset, Buffer packet, bool defer = false) {
+        Enqueue(peer, offset, reinterpret_cast<__ubuf__ uint8_t*>(packet.GetPhyAddr()), defer);
+    }
+    template <class Buffer>
+    __aicore__ inline void Flush(Buffer scratch) {
+        Flush(reinterpret_cast<__ubuf__ uint8_t*>(scratch.GetPhyAddr()));
     }
 };
 }

@@ -20,6 +20,16 @@ find_package(pybind11 CONFIG REQUIRED)
 include(cmake/Dependencies.cmake)
 option(DEEPEP_BUILD_MEGAMOE "Build the optional MegaMoE Beta" OFF)
 option(DEEPEP_MEGAMOE_TIMER "Compile MegaMoE device tracing" OFF)
+# LL diagnostics are compile-time wheel identities. Take them from the
+# environment so the checklist's one-shot wheel build cannot silently reuse
+# the other variant's device objects; an explicit -D still wins.
+foreach(_ll_identity DEEPEP_LL_STAGE_TIMER DEEPEP_LL_REFERENCE_PROFILE)
+    if(DEFINED ENV{${_ll_identity}})
+        set(${_ll_identity} "$ENV{${_ll_identity}}" CACHE STRING "LL diagnostic build identity")
+    else()
+        set(${_ll_identity} OFF CACHE STRING "LL diagnostic build identity")
+    endif()
+endforeach()
 include(cmake/Device.cmake)
 pybind11_add_module(_C csrc/bindings/module.cpp csrc/runtime/session.cpp csrc/ops/notify.cpp csrc/ops/dispatch.cpp csrc/ops/combine.cpp csrc/ops/low_latency.cpp csrc/ubx/v2.cpp)
 target_include_directories(_C PRIVATE csrc "${ASCEND_HOME_PATH}/include" "${SHMEM_ROOT}/include")
@@ -30,6 +40,11 @@ target_include_directories(_C PRIVATE "${DEEPEP_PLATFORM_INCLUDE}")
 target_link_directories(_C PRIVATE "${ASCEND_HOME_PATH}/lib64")
 target_link_libraries(_C PRIVATE platform tiling_api unified_dlog)
 target_compile_definitions(_C PRIVATE DEEPEP_LL_RDMA=1)
+if(DEEPEP_LL_REFERENCE_PROFILE)
+    # The host binding compares this identity with the device library's exported
+    # capability; both translation units must be built for the same variant.
+    target_compile_definitions(_C PRIVATE DEEPEP_LL_REFERENCE_PROFILE=1)
+endif()
 target_link_libraries(_C PRIVATE ascendcl shmem deepep_device ${CMAKE_DL_LIBS})
 target_compile_options(_C PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-O2>" -Wall -Wextra -Werror -fstack-protector-strong)
 target_compile_options(_C PRIVATE "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."

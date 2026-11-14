@@ -23,6 +23,7 @@
 #include "../kernels/combine/low_latency/ep_memory_server_dedup_combine_tiling.h"
 #include "../kernels/dispatch/low_latency/launch.hpp"
 #include "../kernels/combine/low_latency/launch.hpp"
+#include "../kernels/runtime/clock_alignment.h"
 
 namespace py = pybind11;
 namespace deepep {
@@ -233,6 +234,41 @@ void bind_low_latency(py::module_& module)
         if (deepep_ll_ranks_per_group(world) != DispatchDedup::LlGroupForWorld(world))
             throw std::runtime_error("LL Host/device tiling-key policy mismatch; rebuild the complete wheel");
     module.def("low_latency_ranks_per_group", [](uint32_t world) { return DispatchDedup::LlGroupForWorld(world); });
+    module.attr("low_latency_clock_alignment_version") = clock_alignment::kVersion;
+    module.def("low_latency_clock_sync",
+               [](Session& session, py::object comm_args, py::object samples, uint32_t sample_count,
+                  uint32_t warmup_sample_count, uint64_t magic, uint64_t timeout_cycles,
+                  uintptr_t stream_address) {
+                   if (!session.ll_rdma() || !stream_address || !magic || !timeout_cycles ||
+                       sample_count == 0U || sample_count > clock_alignment::kMaxSamples ||
+                       warmup_sample_count > clock_alignment::kMaxWarmupSamples) {
+                       throw std::invalid_argument("Invalid LL clock synchronization configuration");
+                   }
+                   auto* comm = tensor(
+                       comm_args, {sizeof(DispatchDedup::CommArgs)}, "uint8");
+                   auto* output = tensor(
+                       samples, {sample_count, clock_alignment::kSampleWords}, "int64");
+                   session.workspace();
+                   py::gil_scoped_release release;
+                   deepep_clock_sync_kernel_do(
+                       reinterpret_cast<void*>(stream_address), comm, output, sample_count,
+                       warmup_sample_count, magic, timeout_cycles);
+               });
+    module.def("low_latency_clock_sleep_at",
+               [](Session& session, uint64_t local_deadline, py::object release_cycle,
+                  uintptr_t stream_address) {
+                   if (!session.ll_rdma() || !stream_address) {
+                       throw std::invalid_argument("Invalid LL clock sleep-at configuration");
+                   }
+                   uint8_t* output = nullptr;
+                   if (!release_cycle.is_none()) {
+                       output = tensor(release_cycle, {1}, "int64");
+                   }
+                   session.workspace();
+                   py::gil_scoped_release release;
+                   deepep_clock_sleep_at_kernel_do(
+                       reinterpret_cast<void*>(stream_address), local_deadline, output);
+               });
     module.def("low_latency_layout", [](int p, int b, int h, int k, int e, const std::string& dtype) {
         // A rejected shape is a Host-only capability result, not a launch failure.
         dtype_code(dtype);

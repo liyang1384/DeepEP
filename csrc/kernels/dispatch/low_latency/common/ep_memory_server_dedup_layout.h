@@ -97,7 +97,7 @@ inline int BuildDispatchServerDedupLayout(int64_t rankSize, int64_t bs, int64_t 
     if (rankSize > kLlPhysicalRanksPerHost) minimumCountRecords = uint32_t(moeExpertNum / rankSize) + 1U;
 #endif
     if (DispatchServerDedupCountSendUbBytes(uint64_t(bs) * topK, uint32_t(moeExpertNum), countCores,
-                                          minimumCountRecords) >
+                                          minimumCountRecords, minimumCountRecords != 0U) >
         kEpServerDedupCountUbBytes) {
         return DispatchDedup::DISPATCH_DEDUP_ERROR_PARA_CHECK_FAIL;
     }
@@ -182,8 +182,14 @@ inline bool DispatchDedupPacketUbFits(const EpMemoryServerDedupLayout& layout, i
     if (!LlCoreCountValid(coreNum)) return false;
     const auto align = [](uint64_t n, uint64_t a) { return (n + a - 1) / a * a; };
     const uint64_t cores = b < kEpServerDedupAllCoreCountBsThreshold ? coreNum : coreNum / 2U;
-    const uint64_t reserved =
-        b < kEpServerDedupAllCoreCountBsThreshold ? align((num_experts + cores - 1) / cores, 8) * 32 : 0;
+    bool packedFrames = false;
+#ifdef DEEPEP_LL_RDMA
+    packedFrames = world_size > kLlPhysicalRanksPerHost;
+#endif
+    const uint32_t countRecords = uint32_t((num_experts + cores - 1U) / cores);
+    const uint64_t reserved = b < kEpServerDedupAllCoreCountBsThreshold
+        ? (packedFrames ? CountWireBytes(countRecords) : align(countRecords, 8U) * 32U)
+        : 0U;
     const uint64_t tokens = (b + coreNum / 2U - 1U) / (coreNum / 2U);
     const uint64_t groups = std::min<uint64_t>(world_size / LlGroupForWorld(uint32_t(world_size)) - 1, k / 2);
     const bool needQuantize = layout.inputMode == EpServerDedupInputMode::Quantize16;
