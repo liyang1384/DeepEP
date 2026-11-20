@@ -1,6 +1,4 @@
 // Copyright (c) 2026, Lu Lu
-// Folded from the LL dispatch split headers; see csrc/kernels/ep/dispatch.hpp
-// Token/packet data layout and wire constants.
 #pragma once
 
 #include <cstdint>
@@ -64,11 +62,6 @@ __aicore__ __forceinline__ LlCountFrame CountFrame(uint32_t experts, uint32_t wo
             (lastBlock - firstBlock + 1U) * kLlCountWireBlockBytes, 8U};
 }
 }
-
-// Copyright (c) 2026, Lu Lu
-// Modified by candy_cloud_fly 2026
-
-
 
 namespace deep_ep {
 

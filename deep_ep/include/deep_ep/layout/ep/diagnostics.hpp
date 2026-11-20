@@ -1,6 +1,4 @@
 // Copyright (c) 2026, Lu Lu
-// Folded from the LL dispatch split headers; see csrc/kernels/ep/dispatch.hpp
-// Reference profile and stage/expert timer record layouts.
 #pragma once
 
 #include <cstdint>

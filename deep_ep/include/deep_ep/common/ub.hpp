@@ -1,6 +1,4 @@
 // Copyright (c) 2026, Lu Lu
-// Folded from the LL dispatch split headers; see csrc/kernels/ep/dispatch.hpp
-// Physical UB primitives: raw addresses, explicit pipeline events.
 #pragma once
 
 #include <cstdint>
@@ -203,7 +201,6 @@ __simd_vf__ inline void SumPacketFlags(__ubuf__ float* results, __ubuf__ float* 
     }
 }
 }  // namespace LlDispatchC
-
 
 // Count operations use physical UB addresses. Offset zero is a valid address.
 namespace count_ub {

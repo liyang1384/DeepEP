@@ -1,6 +1,4 @@
 // Copyright (c) 2026, Lu Lu
-// Folded from the LL dispatch split headers; see csrc/kernels/ep/dispatch.hpp
-// Compile-time identity: element classes, input modes, grouping and UB capacity.
 #pragma once
 
 #include <cstddef>
@@ -13,8 +11,6 @@
 #ifndef GM_ADDR
 using GM_ADDR = uint8_t*;
 #endif
-
-// Copyright (c) 2026, Lu Lu
 
 // Host-side stand-ins for the CCE keywords, mirroring
 // DeepEP-Ascend/deep_ep/common/compiled.hpp. Device builds keep the
@@ -69,7 +65,6 @@ constexpr uint32_t kCoreBytes = 128U * 1024U;
 }
 }  // namespace deep_ep
 
-// Copyright (c) 2026, Lu Lu
 #include <cstdint>
 
 namespace deep_ep {
@@ -119,10 +114,6 @@ constexpr __aicore__ __forceinline__ uint32_t LlDispatchInputClass(uint8_t dtype
 }
 }  // namespace DispatchDedup
 
-// Copyright (c) 2026, Lu Lu
-// Modified by ryan_li 2026
-
-
 #include <cstdint>
 
 namespace deep_ep {
@@ -136,10 +127,6 @@ constexpr __aicore__ __forceinline__ bool EpServerDedupEnabled(uint32_t numMaxTo
     return world > 16U || numMaxTokensPerRank > kEpServerDedupDedupThreshold;
 }
 }  // namespace DispatchDedup
-
-// Copyright (c) 2026, Lu Lu
-// Modified by candy_cloud_fly 2026
-
 
 #include <cstddef>
 #include <cstdint>
@@ -218,10 +205,6 @@ enum DispatchDedupDataType {
 };
 
 }  // namespace deep_ep
-
-// Copyright (c) 2026, Lu Lu
-// Modified by candy_cloud_fly 2026
-
 
 #include <cstdint>
 

@@ -1,6 +1,4 @@
 // Copyright (c) 2026, Lu Lu
-// Folded from the LL dispatch split headers; see csrc/kernels/ep/dispatch.hpp
-// LL dispatch: DispatchUBLayout, one dispatch_impl kernel and its SuperKernel entries.
 #pragma once
 
 #include <cstdint>
@@ -27,17 +25,11 @@ namespace deep_ep {
 namespace PacketReceiveLayout = DispatchDedup::PacketReceiveLayout;
 }
 
-// Copyright (c) 2026, Lu Lu
-// Modified by candy_cloud_fly 2026
-
-
 // Public SHMEM headers: MTE performs UB -> peer symmetric GM on PIPE_MTE3.
 // Completion is tracked by the caller's existing MTE3 events before UB reuse.
 // No SHMEM global barrier is inserted into per-rank, uneven packet loops.
 #include "device/gm2gm/engine/shmem_device_mte.h"
 #include "device/ub2gm/engine/shmem_device_mte.h"
-
-// Copyright (c) 2026, Lu Lu
 
 namespace deep_ep {
 using comm::TransportView;
@@ -56,8 +48,6 @@ __aicore__ inline uint32_t RotateDispatchServerDedupMagic(const TransportView& v
     return magic;
 }
 }  // namespace DispatchDedup
-
-// Copyright (c) 2026, Lu Lu
 
 namespace deep_ep {
 __aicore__ inline uint32_t ServerDedupWireOffset(uint32_t logical)
@@ -115,11 +105,6 @@ __aicore__ inline void PrepareServerDedupForward(ServerDedupPacketTail tail)
     tail.Header()[3U] = uint32_t(EpServerDedupTokenType::Terminal);
 }
 }  // namespace DispatchDedup
-
-// Copyright (c) 2026, Lu Lu
-// Modified by candy_cloud_fly 2026
-
-
 
 namespace deep_ep {
 
@@ -208,8 +193,6 @@ private:
 };
 }  // namespace DispatchDedup
 
-
-
 namespace deep_ep {
 
 /**
@@ -241,7 +224,6 @@ __simd_vf__ void histogram_accumulate_u16(__ubuf__ int32_t* data, __ubuf__ uint1
 }
 
 }  // namespace DispatchDedup
-
 
 namespace deep_ep {
 // At most ceil(1024 / 8)=128 logical records per receiver and world>=32.
@@ -284,7 +266,6 @@ __aicore__ __forceinline__ bool BuildCountReadPlan(uint32_t experts, uint32_t wo
 }
 }
 
-
 namespace deep_ep {
 // Issue only; caller retains its existing MTE2->Vector->Scalar wait chain.
 // Source-major frames are strided across source ranks. Each expert row becomes
@@ -301,7 +282,6 @@ __aicore__ inline void ReadCountFrames(__ubuf__ uint32_t* snapshot,
     }
 }
 }
-
 
 namespace deep_ep {
 struct LlCountAssignment {
@@ -339,7 +319,6 @@ __aicore__ __forceinline__ LlCountAssignment CountAssignment(uint32_t rank, uint
     return {first, end, remote, (records + 7U) / 8U * 8U, remoteRecords};
 }
 }
-
 
 namespace deep_ep {
 // A non-dedup core can own flat routes without owning a token-weight slice.
@@ -412,7 +391,6 @@ __aicore__ __forceinline__ void LlBuildRouteQ(Ids ids, uint32_t routeCount, uint
 }
 }
 
-
 namespace deep_ep {
 // Cache one token in the existing input queue (plain/prequantized) or quantBuf
 // (quantizing). Packet tails are mutable, so a cache hit must retire the prior
@@ -442,7 +420,6 @@ public:
 
 // Prequantized padding plan moved to layout/ep/token.hpp.
 }
-
 
 namespace deep_ep {
 // Rotate an existing permutation; never change route ownership or destination.
@@ -487,7 +464,6 @@ __aicore__ __forceinline__ uint32_t LlDirectGroupOrder(uint32_t groups, uint32_t
 }
 }  // namespace DispatchDedup
 
-
 namespace deep_ep {
 // Each target physical host contains four consecutive
 // full-mesh groups of four ranks. Count actual expert deliveries, not distinct
@@ -525,9 +501,6 @@ __aicore__ __forceinline__ uint32_t LlRelayMemberMask(uint32_t mask, uint32_t fi
     return mask & ~(1U << firstK);
 }
 }
-
-// Copyright (c) 2026, Lu Lu
-// Modified by ryan_li 2026
 
 namespace mxfp8_quant {
 // MXFP8 keeps its original 32-element groups, exponent rules and cast rounding.
@@ -861,11 +834,6 @@ private:
 #endif
 };
 }  // namespace LlReferenceProfile
-
-// Copyright (c) 2026, Lu Lu
-// Modified by ryan_li 2026
-
-
 
 namespace deep_ep {
 using namespace count_ub;
@@ -1606,9 +1574,6 @@ __aicore__ inline void ServerDedupCounts<kNumMaxTokensPerRank>::WaitCumSumFlag()
 
 }  // namespace DispatchDedup
 
-// Copyright (c) 2026, Lu Lu
-// Modified by ryan_li 2026
-
 namespace deep_ep {
 template <uint32_t kNumMaxTokensPerRank, class XType, uint32_t Group = 16U>
 class ServerDedupSender {
@@ -1990,9 +1955,6 @@ private:
 };
 }  // namespace DispatchDedup
 
-// Copyright (c) 2026, Lu Lu
-// Modified by ryan_li 2026
-
 namespace deep_ep {
 template <uint32_t kNumMaxTokensPerRank>
 class ServerDedupReceiver {
@@ -2298,9 +2260,6 @@ private:
     __gm__ uint32_t *tokenType_ = nullptr, *destinationIndex_ = nullptr, *relayReadIndex_ = nullptr;
 };
 }  // namespace DispatchDedup
-
-// Copyright (c) 2026, Lu Lu
-// Modified by ryan_li 2026
 
 namespace deep_ep {
 

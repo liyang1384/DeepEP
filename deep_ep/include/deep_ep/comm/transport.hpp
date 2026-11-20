@@ -1,6 +1,4 @@
 // Copyright (c) 2026, Lu Lu
-// Folded from the LL dispatch split headers; see csrc/kernels/ep/dispatch.hpp
-// Device transport over SHMEM/RDMA with a materialized TransportView.
 #pragma once
 
 #include <cstdint>
@@ -237,7 +235,6 @@ __aicore__ inline void CountFrame(const TransportView& args, uint32_t peer,
 #endif
 }
 }
-
 
 namespace comm {
 // One staged-but-not-posted packet. Reuse the existing GM batch and output

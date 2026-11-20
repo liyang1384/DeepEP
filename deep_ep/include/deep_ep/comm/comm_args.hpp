@@ -1,6 +1,4 @@
 // Copyright (c) 2026, Lu Lu
-// Folded from the LL dispatch split headers; see csrc/kernels/ep/dispatch.hpp
-// 256-rank Host/device ABI used by combine and clock; dispatch no longer reads it.
 #pragma once
 
 #include <cstddef>

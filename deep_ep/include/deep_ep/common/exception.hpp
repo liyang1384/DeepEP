@@ -1,6 +1,4 @@
 // Copyright (c) 2026, Lu Lu
-// Folded from the LL dispatch split headers; see csrc/kernels/ep/dispatch.hpp
-// Host and device assertions.
 #pragma once
 
 #include <exception>
@@ -43,5 +41,4 @@ public:
 #define EP_DEVICE_ASSERT(cond) assert(cond)
 #endif
 #endif
-
 

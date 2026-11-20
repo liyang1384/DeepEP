@@ -1,17 +1,10 @@
 // Copyright (c) 2026, Lu Lu
-// Folded from the LL dispatch split headers; see csrc/kernels/ep/dispatch.hpp
-// Rank-owned workspace offsets: count matrix, prefix and payload windows.
 #pragma once
 
 #include <cstdint>
 
 #include <deep_ep/common/compiled.hpp>
 #include <deep_ep/layout/ep/token.hpp>
-
-// Copyright (c) 2026, Lu Lu
-// Modified by ryan_li 2026
-
-
 
 // Count participation threshold is independent of the runtime send/receive split.
 #ifndef DISPATCH_SERVER_DEDUP_ALL_CORE_COUNT_BS_THRESHOLD
@@ -96,9 +89,6 @@ __aicore__ __forceinline__ uint64_t DispatchServerDedupCountSendUbBytes(uint64_t
     return 3U * routeBytes + workBytes + localBytes + uint64_t(alignedRecords) * sizeof(int32_t);
 }
 }  // namespace deep_ep
-
-// Copyright (c) 2026, Lu Lu
-// Modified by candy_cloud_fly 2026
 
 namespace deep_ep {
 struct EpMemoryServerDedupLayout {
