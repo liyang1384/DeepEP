@@ -493,6 +493,27 @@ def publish_source_native(destination):
     print(f"Prepared source native links in {package}")
 
 
+def bundle_kernel_sources(destination, shmem_root):
+    """Ship the device headers the installed wheel compiles through DeepJIT."""
+    kernel_src = destination / "_kernel_src"
+    csrc_out = kernel_src / "csrc"
+    for path in (ROOT / "csrc").rglob("*"):
+        if path.is_file() and path.suffix in {".h", ".hpp"}:
+            target = csrc_out / path.relative_to(ROOT / "csrc")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+    include_out = destination / "include"
+    for path in (ROOT / "deep_ep" / "include").rglob("*.hpp"):
+        target = include_out / path.relative_to(ROOT / "deep_ep" / "include")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+    shmem_source = Path(shmem_root)
+    for sub in ("include", "src"):
+        source = shmem_source / sub
+        if source.is_dir():
+            shutil.copytree(source, kernel_src / "shmem" / sub, dirs_exist_ok=True)
+
+
 class CMakeBuild(build_ext):
     def run(self):
         # Check before setuptools temporarily clears inplace during run().
@@ -573,6 +594,7 @@ class CMakeBuild(build_ext):
         info["compiler"] = json.loads((directory / "compiler-info.json").read_text())
         info.update(json.loads((directory / "capabilities.json").read_text(encoding="utf-8")))
         info["shmem_runtime"] = bundle_shmem_runtime(configuration["SHMEM_ROOT"], destination)
+        bundle_kernel_sources(destination, configuration["SHMEM_ROOT"])
         (destination / "_build_info.json").write_text(
             json.dumps(info, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )

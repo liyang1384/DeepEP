@@ -518,19 +518,14 @@ class ElasticBuffer:
                         "source_mask": torch.empty((b,), dtype=torch.int32, device=hidden.device),
                         "source_weights": torch.empty((b, k), dtype=torch.float32, device=hidden.device),
                         "comm_args": runtime.low_latency_comm_args,
-                        "tiling": self._upload_low_latency(
-                            native.low_latency_dispatch_tiling(
-                                runtime.world_size, b, h, k, num_experts, dtype, capacity
-                            ),
-                            hidden.device,
-                        ),
                     }
                     retained += tuple(value for value in tensors.values() if value is not None)
                     runtime.notify_inflight = retained
                     for value in retained:
                         value.record_stream(runtime.stream)
                     native.dispatch_low_latency(
-                        runtime.native, tensors, b, h, k, num_experts, output_rows, dtype, runtime.stream.npu_stream
+                        runtime.native, tensors, b, h, k, num_experts, output_rows, capacity, dtype,
+                        runtime.stream.npu_stream
                     )
                     result = EPHandle(
                         True,

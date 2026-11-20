@@ -35,7 +35,6 @@ find_path(DEVICE_RT_INCLUDE rt.h HINTS
 # compile-time identity: the device never enables them from a runtime flag.
 set(_ll_sources
     "${DEEPEP_SOURCE_DIR}/csrc/kernels/runtime/clock_alignment.cpp"
-    "${DEEPEP_SOURCE_DIR}/csrc/kernels/dispatch/low_latency.cpp"
     "${DEEPEP_SOURCE_DIR}/csrc/kernels/combine/low_latency.cpp")
 # Other device kernels keep the upstream multi-backend build unchanged.
 set(_other_sources
@@ -73,6 +72,7 @@ set(_device_includes
     "${_sdk_include}" "${_arch_include}"
     "${_tikcpp}" "${_tikcpp}/tikcfw"
     "${_tikcpp}/tikcfw/impl" "${_tikcpp}/tikcfw/interface"
+    "${DEEPEP_SOURCE_DIR}/csrc" "${DEEPEP_SOURCE_DIR}/deep_ep/include"
     "${SHMEM_ROOT}/include" "${SHMEM_ROOT}/src" "${SHMEM_ROOT}/src/device"
     "${SHMEM_ROOT}/src/device_simt")
 if(DEVICE_RT_INCLUDE)
