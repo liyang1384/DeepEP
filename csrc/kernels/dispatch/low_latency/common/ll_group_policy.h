@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-#include "ll_compile_attrs.h"
+#include <kernels/dispatch/low_latency/common/ll_compile_attrs.h>
 namespace DispatchDedup {
 constexpr uint32_t kLlPhysicalRanksPerHost = 16U;
 constexpr uint32_t kLlMaxRanksPerGroup = 16U;

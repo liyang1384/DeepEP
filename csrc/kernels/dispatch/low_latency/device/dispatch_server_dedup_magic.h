@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Lu Lu
 #pragma once
-#include "ll_dispatch_c_api.h"
-#include "../common/ep_memory_server_dedup_count_layout.h"
+#include <kernels/dispatch/low_latency/device/ll_dispatch_c_api.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_count_layout.h>
 
 namespace DispatchDedup {
 // Each core owns one local 512B magic slot. Retire its 32B scratch before Counts uses UB0.

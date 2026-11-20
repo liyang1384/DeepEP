@@ -4,19 +4,20 @@
 #ifndef COMBINE_DEDUP_EP_SERVER_DEDUP_PARTIAL_H
 #define COMBINE_DEDUP_EP_SERVER_DEDUP_PARTIAL_H
 
-#include "kernel_operator.h"
-#include "combine_ready.h"
-#include "combine_ready_select.h"
+#include <kernel_operator.h>
+#include <kernels/common/core_context.h>
+#include <ubx/kernels/combine_ready.h>
+#include <ubx/kernels/combine_ready_select.h>
 
-#include "ll_transport.h"
-#include "combine_rdma_return.h"
-#include "combine_stage_wire.h"
-#include "comm_args.h"
-#include "dispatch_dedup_types.h"
-#include "ep_memory_server_dedup_buffer_layout.h"
-#include "ep_memory_server_dedup_combine_config.h"
-#include "combine_server_dedup_select.h"
-#include "combine_partial_plan.h"
+#include <ubx/kernels/ll_transport.h>
+#include <ubx/kernels/combine_rdma_return.h>
+#include <ubx/kernels/combine_stage_wire.h>
+#include <ubx/kernels/comm_args.h>
+#include <ubx/kernels/dispatch_dedup_types.h>
+#include <ubx/kernels/ep_memory_server_dedup_buffer_layout.h>
+#include <ubx/kernels/ep_memory_server_dedup_combine_config.h>
+#include <ubx/kernels/combine_server_dedup_select.h>
+#include <ubx/kernels/combine_partial_plan.h>
 
 namespace UbxCombine {
 using namespace AscendC;
@@ -30,12 +31,15 @@ public:
     __aicore__ inline void Init(const __gm__ UbxDispatch::CommArgs* args, TPipe* pipe, LocalTensor<uint8_t> scratch,
                                 GM_ADDR expert, GM_ADDR table2, GM_ADDR table3, GM_ADDR types, uint32_t tokens,
                                 uint32_t bs, uint32_t h, uint32_t k, uint32_t experts, uint8_t dtype, uint64_t window,
-                                const EpCombineM45WorkspaceLayout& layout, ReturnBatch* batch)
+                                const EpCombineM45WorkspaceLayout& layout, ReturnBatch* batch,
+                                deepep::CoreContext core = deepep::OrdinaryCoreContext())
     {
         args_ = args;
         rdmaBatch_ = batch;
 
-        recvCores_ = EpCombineRecvCoreCount(GetBlockNum());
+        coreIdx_ = core.index;
+        coreNum_ = core.count;
+        recvCores_ = EpCombineRecvCoreCount(coreNum_);
         pipe_ = pipe;
         scratch_ = scratch[layout.phaseOffset];
         tokens_ = tokens;
@@ -95,14 +99,14 @@ public:
 
         planned_ = plan_.Prepare(planScratch_, planScratchBytes_, rows_, types_, table2_, tokens_,
                                  uint32_t(args_->rankSize), uint32_t(args_->rank),
-                                 CombineReceiveCoreIndex(GetBlockIdx(), GetBlockNum(), recvCores_), recvCores_);
+                                 CombineReceiveCoreIndex(coreIdx_, coreNum_, recvCores_), recvCores_);
 
         // Hand Vector scratch back to MTE2 before any input lane can overwrite
         // it. Preserve the caller's seeded MTE3_V output events.
         SetFlag<HardEvent::V_MTE2>(7U);
         WaitFlag<HardEvent::V_MTE2>(7U);
 
-        if (UbxTransport::Rdma(args_)) rdmaBatch_->Init(args_, packetBytes_);
+        if (UbxTransport::Rdma(args_)) rdmaBatch_->Init(args_, packetBytes_, coreIdx_, coreNum_);
 
         for (uint32_t lane = 0; lane < inputLanes_; ++lane) SetFlag<HardEvent::V_MTE2>(lane);
         uint64_t flagMask[2] = {0xffU, 0U};
@@ -258,7 +262,7 @@ private:
     __aicore__ inline uint32_t SelectServer(uint32_t server, uint32_t& owner, bool validateRanks, uint32_t append = 0U)
     {
         uint32_t count = append;
-        const uint32_t localCore = CombineReceiveCoreIndex(GetBlockIdx(), GetBlockNum(), recvCores_);
+        const uint32_t localCore = CombineReceiveCoreIndex(coreIdx_, coreNum_, recvCores_);
         const uint32_t vectorBytes = EpCombineAlign(scanRows_ * 4U, 256U);
         const uint32_t maskBytes = EpCombineAlign((scanRows_ + 7U) / 8U, 32U);
         auto table = scan_.ReinterpretCast<int32_t>();
@@ -426,6 +430,8 @@ private:
     uint32_t readyTable3Stride_ = 0U;
     bool readyCached_ = false;
 
+    uint32_t coreIdx_ = 0;
+    uint32_t coreNum_ = 0;
     uint32_t recvCores_ = 0;
     ReturnBatch* rdmaBatch_ = nullptr;
     const __gm__ UbxDispatch::CommArgs* args_ = nullptr;

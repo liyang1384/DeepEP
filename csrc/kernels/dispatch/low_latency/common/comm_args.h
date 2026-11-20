@@ -5,11 +5,11 @@
 #define DISPATCH_DEDUP_COMM_ARGS_H
 #include <cstdint>
 #include <cstddef>
-#include "ll_compile_attrs.h"
-#include "ll_core_config.h"
+#include <kernels/dispatch/low_latency/common/ll_compile_attrs.h>
+#include <kernels/dispatch/low_latency/common/ll_core_config.h>
 
 #if defined(__CCE__) && defined(__CCE_IS_AICORE__)
-#include "kernel_operator.h"
+#include <kernel_operator.h>
 #endif
 
 #ifndef GM_ADDR

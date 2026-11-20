@@ -7,7 +7,7 @@
 // Public SHMEM headers: MTE performs UB -> peer symmetric GM on PIPE_MTE3.
 // Completion is tracked by the caller's existing MTE3 events before UB reuse.
 // No SHMEM global barrier is inserted into per-rank, uneven packet loops.
-#include "device/gm2gm/engine/shmem_device_mte.h"
-#include "device/ub2gm/engine/shmem_device_mte.h"
+#include <device/gm2gm/engine/shmem_device_mte.h>
+#include <device/ub2gm/engine/shmem_device_mte.h>
 
 #endif

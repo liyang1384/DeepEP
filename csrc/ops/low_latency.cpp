@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include "runtime/session.hpp"
+#include "runtime/ll_jit.hpp"
 #include "runtime/ll_core_config.hpp"
 #include "ubx/v2.hpp"
 #include "../kernels/dispatch/low_latency/common/ll_rdma_layout.h"
@@ -389,7 +390,17 @@ void bind_low_latency(py::module_& module)
         session.workspace();  // Validate the owning context before launch.
         py::gil_scoped_release release;
         session.invalidate_dispatch_controls();
-        dispatch_server_dedup_kernel_do(reinterpret_cast<void*>(stream_address), &args);
+        LlJitSignature spec;
+        spec.operation = LlJitOperation::Dispatch;
+        spec.bs = uint32_t(b); spec.hidden = uint32_t(h); spec.topK = uint32_t(k); spec.experts = uint32_t(e);
+        spec.capacity = uint32_t(c); spec.cores = args.coreNum; spec.world = uint32_t(session.world());
+        spec.rank = uint32_t(session.rank()); spec.inputMode = format.inputMode;
+        spec.inputClass = DispatchDedup::LlDispatchInputClass(format.dtype, format.quantMode,
+                                                               format.expandXOutDtype, format.inputMode);
+        spec.group = DispatchDedup::LlTilingKeyForWorld(uint32_t(session.world()));
+        spec.e4m3 = fp8 ? 1U : 0U;
+        spec.dedup = DispatchDedup::EpServerDedupEnabled(uint32_t(c), uint32_t(b)) ? 1U : 0U;
+        ll_jit_launch(spec, &args, sizeof(args), reinterpret_cast<void*>(stream_address));
     });
     module.def("combine_low_latency", [](Session& session, py::dict tensors, int b, int h, int k, int e,
                                          const std::string& dtype, uintptr_t stream_address) {
@@ -439,13 +450,20 @@ void bind_low_latency(py::module_& module)
         session.workspace();
         py::gil_scoped_release release;
         session.invalidate_dispatch_controls();
+        LlJitSignature spec;
+        spec.operation = session.ll_rdma() ? LlJitOperation::UbxCombine : LlJitOperation::Combine;
+        spec.bs = uint32_t(b); spec.hidden = uint32_t(h); spec.topK = uint32_t(k); spec.experts = uint32_t(e);
+        spec.capacity = uint32_t(c); spec.cores = cores; spec.world = uint32_t(session.world());
+        spec.rank = uint32_t(session.rank()); spec.bf16 = dtype == "bfloat16" ? 1U : 0U;
+        spec.group = DispatchDedup::LlTilingKeyForWorld(uint32_t(session.world()));
+        spec.dedup = DispatchDedup::EpServerDedupEnabled(uint32_t(c), uint32_t(b)) ? 1U : 0U;
         if (session.ll_rdma()) {
             const ubx::CombineArgs rdma_args{args.commArgs,     args.expertOut, args.destinationIndex, args.sendCounts,
                                              args.expertScales, args.tokenType, args.relayReadIndex,   args.sourceMask,
                                              args.yOut,         args.tilingData, cores};
-            ubx_combine_launch(reinterpret_cast<void*>(stream_address), &rdma_args);
+            ll_jit_launch(spec, &rdma_args, sizeof(rdma_args), reinterpret_cast<void*>(stream_address));
         } else {
-            combine_server_dedup_kernel_do(reinterpret_cast<void*>(stream_address), &args);
+            ll_jit_launch(spec, &args, sizeof(args), reinterpret_cast<void*>(stream_address));
         }
     });
 }

@@ -5,7 +5,7 @@
 #define DISPATCH_DEDUP_EP_MEMORY_SERVER_DEDUP_MODE_H
 
 #include <cstdint>
-#include "ll_compile_attrs.h"
+#include <kernels/dispatch/low_latency/common/ll_compile_attrs.h>
 
 namespace DispatchDedup {
 // The dedup resource layout is fixed for the lifetime of the binary. The

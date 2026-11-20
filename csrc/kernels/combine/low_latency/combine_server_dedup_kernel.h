@@ -4,14 +4,15 @@
 #ifndef COMBINE_DEDUP_EP_COMBINE_MEMORY_SERVER_DEDUP_KERNEL_H
 #define COMBINE_DEDUP_EP_COMBINE_MEMORY_SERVER_DEDUP_KERNEL_H
 
-#include "kernel_operator.h"
-#include "../../dispatch/low_latency/common/ep_memory_server_dedup_count_layout.h"
-#include "../../dispatch/low_latency/common/comm_args.h"
-#include "ep_memory_server_dedup_buffer_layout.h"
-#include "ep_memory_server_dedup_combine_config.h"
-#include "combine_server_dedup_partial.h"
-#include "combine_server_dedup_source_aggregate.h"
-#include "combine_server_dedup_select.h"
+#include <kernel_operator.h>
+#include <kernels/common/core_context.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_count_layout.h>
+#include <kernels/dispatch/low_latency/common/comm_args.h>
+#include <kernels/combine/low_latency/ep_memory_server_dedup_buffer_layout.h>
+#include <kernels/combine/low_latency/ep_memory_server_dedup_combine_config.h>
+#include <kernels/combine/low_latency/combine_server_dedup_partial.h>
+#include <kernels/combine/low_latency/combine_server_dedup_source_aggregate.h>
+#include <kernels/combine/low_latency/combine_server_dedup_select.h>
 
 namespace CombineDedup {
 using namespace AscendC;
@@ -24,10 +25,11 @@ public:
     __aicore__ inline void Init(GM_ADDR commArgs, GM_ADDR expertOut, GM_ADDR assistInfoForCombine, GM_ADDR sendCounts,
                                 GM_ADDR expertScales, GM_ADDR tokenType, GM_ADDR relayReadIndex, GM_ADDR sourceMask,
                                 GM_ADDR yOut, uint32_t bs, uint32_t h, uint32_t topK, uint32_t experts, uint8_t dtype,
-                                uint8_t quantMode, int64_t magic, bool enableDedup = true)
+                                uint8_t quantMode, int64_t magic, bool enableDedup = true,
+                                deepep::CoreContext core = deepep::OrdinaryCoreContext())
     {
         (void)quantMode;
-        core_ = GetBlockIdx();
+        core_ = core.index;
         args_ = reinterpret_cast<const __gm__ DispatchDedup::CommArgs*>(commArgs);
         enableDedup_ = enableDedup;
         h_ = h;

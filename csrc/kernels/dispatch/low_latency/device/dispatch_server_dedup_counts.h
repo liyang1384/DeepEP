@@ -4,16 +4,17 @@
 #ifndef DISPATCH_SERVER_DEDUP_COUNTS_H
 #define DISPATCH_SERVER_DEDUP_COUNTS_H
 
-#include "kernel_operator.h"
-#include "ll_transport.h"
-#include "ll_count_frame_transport.h"
-#include "ll_count_frame_receive.h"
-#include "ll_count_histogram.h"
-#include "../common/ll_count_frame_layout.h"
-#include "../common/ll_count_assignment.h"
-#include "../common/ll_reference_profile_device.h"
-#include "ll_count_c_api.h"
-#include "../common/ep_memory_server_dedup_count_layout.h"
+#include <kernel_operator.h>
+#include <kernels/common/core_context.h>
+#include <kernels/dispatch/low_latency/device/ll_transport.h>
+#include <kernels/dispatch/low_latency/device/ll_count_frame_transport.h>
+#include <kernels/dispatch/low_latency/device/ll_count_frame_receive.h>
+#include <kernels/dispatch/low_latency/device/ll_count_histogram.h>
+#include <kernels/dispatch/low_latency/common/ll_count_frame_layout.h>
+#include <kernels/dispatch/low_latency/common/ll_count_assignment.h>
+#include <kernels/dispatch/low_latency/common/ll_reference_profile_device.h>
+#include <kernels/dispatch/low_latency/device/ll_count_c_api.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_count_layout.h>
 
 namespace DispatchDedup {
 using namespace LlCountC;
@@ -30,14 +31,16 @@ public:
     // 摘要：绑定路由与计数输出，选择本轮控制区；保存并调整 CTRL[60]，供整数位模式的 FP32 归约使用。
     __aicore__ inline void Init(GM_ADDR commArgs, GM_ADDR expertIds, GM_ADDR expertTokenNumsOut, GM_ADDR sendCountsOut,
                                 uint32_t bs, uint32_t topK, uint32_t experts, uint32_t expertTokenNumsType,
-                                int64_t magic, LlReferenceProfile::DeviceProfile* profile = nullptr)
+                                int64_t magic, LlReferenceProfile::DeviceProfile* profile = nullptr,
+                                deepep::CoreContext core = deepep::OrdinaryCoreContext())
     {
         profile_ = profile;
         args_ = reinterpret_cast<const __gm__ DispatchDedup::CommArgs*>(commArgs);
         epRankId_ = args_->rank;
         epWorldSize_ = args_->rankSize;
-        aivId_ = asc_get_block_idx();
-        coreNum_ = asc_get_block_num();
+        aivId_ = core.index;
+        coreNum_ = core.count;
+        coreContext_ = core;
         aivUsedAllToAll_ = aivUsedCumSum_ = coreNum_ / 2U;
         expertIdsCnt_ = bs * topK;
         rscvStatusNum_ = experts;
@@ -47,7 +50,7 @@ public:
         packedFrames_ = LlTransport::Rdma(args_) && epWorldSize_ > 16U;
         directRanks_ = LlTransport::Rdma(args_) && epWorldSize_ > kLlPhysicalRanksPerHost;
         countWindow_ = DispatchServerDedupWindowOffset(magic);
-        retirement_.Init(args_);
+        retirement_.Init(args_, core);
         layout_ = DispatchServerDedupCountLayout(experts, coreNum_);
         stateOffset_ = DispatchServerDedupWindowOffset(magic) + layout_.cntOffset;
         GM_ADDR localState = args_->peerMems[epRankId_] + stateOffset_;
@@ -140,6 +143,7 @@ private:
     EpServerDedupCountLayout layout_{};
     uint64_t stateOffset_ = 0;
     uint64_t originalOverflowMode_ = 0;
+    deepep::CoreContext coreContext_{};
     uint32_t epRankId_ = 0, epWorldSize_ = 0, aivId_ = 0;
     uint32_t expertIdsCnt_ = 0;
     uint32_t rscvStatusNum_ = 0, moeExpertNumPerRank_ = 0, expertTokenNumsType_ = 0;
@@ -241,7 +245,7 @@ __aicore__ inline void ServerDedupCounts::SendCnt()
 #endif
             LlTransport::DirectCountFrame(args_, destination, stateOffset_ + frame.frameOffset,
                 reinterpret_cast<__ubuf__ uint8_t*>(remoteFrame), moeExpertNumPerRank_,
-                reinterpret_cast<__ubuf__ uint8_t*>(histogram_), countWindow_
+                reinterpret_cast<__ubuf__ uint8_t*>(histogram_), coreContext_, countWindow_
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
                 , profile_
 #endif
@@ -431,7 +435,7 @@ __aicore__ inline void ServerDedupCounts::SendExpertCntRange(uint32_t start, uin
             if (profile_) profile_->CountBoundary<13, true>();
 #endif
             LlTransport::CountFrame(args_, dst, stateOffset_ + frame.frameOffset,
-                reinterpret_cast<__ubuf__ uint8_t*>(records_) + frame.sourceOffset, frame.wireBytes, count
+                reinterpret_cast<__ubuf__ uint8_t*>(records_) + frame.sourceOffset, frame.wireBytes, count, coreContext_
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
                 , profile_
 #endif
@@ -445,7 +449,7 @@ __aicore__ inline void ServerDedupCounts::SendExpertCntRange(uint32_t start, uin
         LlTransport::Records(args_, dst, stateOffset_ + offset,
             reinterpret_cast<__ubuf__ uint8_t*>(records_) + (expert - start) * UB_ALIGN,
             count, epWorldSize_ * kEpServerDedupCountGmStride, true,
-            reinterpret_cast<__ubuf__ uint8_t*>(work_));
+            reinterpret_cast<__ubuf__ uint8_t*>(work_), coreContext_);
         expert += count;
     }
 }

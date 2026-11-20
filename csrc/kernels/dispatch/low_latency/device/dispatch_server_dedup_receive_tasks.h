@@ -4,8 +4,8 @@
 #ifndef DISPATCH_SERVER_DEDUP_RECEIVE_TASKS_H
 #define DISPATCH_SERVER_DEDUP_RECEIVE_TASKS_H
 
-#include "ll_dispatch_c_api.h"
-#include "../common/ep_memory_server_dedup_data_layout.h"
+#include <kernels/dispatch/low_latency/device/ll_dispatch_c_api.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_data_layout.h>
 
 namespace DispatchDedup {
 

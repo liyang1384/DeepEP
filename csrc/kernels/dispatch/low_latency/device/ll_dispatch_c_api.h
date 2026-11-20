@@ -4,10 +4,10 @@
 #include <c_api/asc_simd.h>
 #include <c_api/spr/spr.h>
 #include <c_api/sys_var/sys_var.h>
-#include "ll_count_c_api.h"
-#include "../common/ll_core_config.h"
-#include "../common/ll_sender_input_reuse.h"
-#include "../../../common/ep_packet_receive_layout.h"
+#include <kernels/dispatch/low_latency/device/ll_count_c_api.h>
+#include <kernels/dispatch/low_latency/common/ll_core_config.h>
+#include <kernels/dispatch/low_latency/common/ll_sender_input_reuse.h>
+#include <kernels/common/ep_packet_receive_layout.h>
 
 // Physical UB layouts and explicit pipeline dependencies, as used by DeepEP-Ascend.
 // This layer does not construct tensors, queues, buffers, or allocator state.

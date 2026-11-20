@@ -1,6 +1,6 @@
 #pragma once
-#include "ll_count_c_api.h"
-#include "../common/ll_count_read_plan.h"
+#include <kernels/dispatch/low_latency/device/ll_count_c_api.h>
+#include <kernels/dispatch/low_latency/common/ll_count_read_plan.h>
 
 namespace DispatchDedup {
 // Issue only; caller retains its existing MTE2->Vector->Scalar wait chain.

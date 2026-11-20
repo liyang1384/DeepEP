@@ -2,9 +2,9 @@
 // Modified by candy_cloud_fly 2026
 
 #pragma once
-#include "ep_memory_server_dedup_combine_config.h"
-#include "ep_memory_server_dedup_buffer_layout.h"
-#include "../../dispatch/low_latency/common/ep_memory_server_dedup_count_layout.h"
+#include <kernels/combine/low_latency/ep_memory_server_dedup_combine_config.h>
+#include <kernels/combine/low_latency/ep_memory_server_dedup_buffer_layout.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_count_layout.h>
 namespace CombineDedup {
 struct Layout {
     uint64_t capacityRows = 0, requiredWindowBytes = 0;

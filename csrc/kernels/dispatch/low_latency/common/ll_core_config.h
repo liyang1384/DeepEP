@@ -1,7 +1,7 @@
 #ifndef DEEPEP_LL_CORE_CONFIG_H
 #define DEEPEP_LL_CORE_CONFIG_H
 #include <cstdint>
-#include "ll_compile_attrs.h"
+#include <kernels/dispatch/low_latency/common/ll_compile_attrs.h>
 namespace DispatchDedup {
 // Count frames and the full Dispatch C API are one wire. The remote/local
 // histogram split is gone, so this protocol is the only LL count identity.

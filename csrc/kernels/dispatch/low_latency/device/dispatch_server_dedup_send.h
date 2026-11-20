@@ -2,18 +2,18 @@
 // Modified by ryan_li 2026
 #ifndef DISPATCH_SERVER_DEDUP_SEND_H
 #define DISPATCH_SERVER_DEDUP_SEND_H
-#include "ll_dispatch_c_api.h"
-#include "ll_transport.h"
-#include "ll_dispatch_rdma_batch.h"
-#include "dispatch_dedup_mxfp8_quant.h"
-#include "../common/ll_reference_profile_device.h"
-#include "../common/ep_memory_server_dedup_data_layout.h"
-#include "../common/ep_memory_server_dedup_protocol.h"
-#include "../common/ll_send_order.h"
-#include "../common/ll_fullmesh_first_hop.h"
-#include "../common/ll_sender_route_plan.h"
-#include "../common/ll_sender_input_reuse.h"
-#include "../../../common/ep_packet_receive_layout.h"
+#include <kernels/dispatch/low_latency/device/ll_dispatch_c_api.h>
+#include <kernels/dispatch/low_latency/device/ll_transport.h>
+#include <kernels/dispatch/low_latency/device/ll_dispatch_rdma_batch.h>
+#include <kernels/dispatch/low_latency/device/dispatch_dedup_mxfp8_quant.h>
+#include <kernels/dispatch/low_latency/common/ll_reference_profile_device.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_data_layout.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_protocol.h>
+#include <kernels/dispatch/low_latency/common/ll_send_order.h>
+#include <kernels/dispatch/low_latency/common/ll_fullmesh_first_hop.h>
+#include <kernels/dispatch/low_latency/common/ll_sender_route_plan.h>
+#include <kernels/dispatch/low_latency/common/ll_sender_input_reuse.h>
+#include <kernels/common/ep_packet_receive_layout.h>
 
 namespace DispatchDedup {
 template <class XType, uint32_t Group = 16U>
@@ -22,21 +22,25 @@ public:
     __aicore__ inline void Init(const __gm__ CommArgs* args, GM_ADDR x, GM_ADDR ids, GM_ADDR weights,
         GM_ADDR sourceMask, GM_ADDR sourceWeights, uint32_t bs, uint32_t h, uint32_t k,
         uint32_t experts, EpServerDedupInputMode inputMode, bool e4m3, int64_t magic = 0,
-        GM_ADDR inputScales = nullptr, bool enableDedup = true, uint32_t coreNum = 0U)
+        GM_ADDR inputScales = nullptr, bool enableDedup = true, uint32_t coreNum = 0U,
+        deepep::CoreContext core = deepep::OrdinaryCoreContext())
     {
         args_ = args;
+        coreIdx_ = core.index;
+        coreNum_ = core.count;
+        coreContext_ = core;
         prequantized_ = inputMode == EpServerDedupInputMode::PrequantizedFp8Packs;
         needQuantize_ = inputMode == EpServerDedupInputMode::Quantize16;
         e4m3_ = e4m3;
         inputRowBytes_ = prequantized_ ? h : h * sizeof(XType);
-        sendCores_ = (coreNum ? coreNum : asc_get_block_num()) / 2U;
+        sendCores_ = (coreNum ? coreNum : coreNum_) / 2U;
         enableDedup_ = enableDedup;
         fullMeshFirstHop_ = Group == kLlPhysicalRanksPerHost && LlTransport::Rdma(args);
         bs_ = bs; h_ = h; k_ = k; experts_ = experts;
         localExperts_ = experts / args->rankSize;
-        const uint32_t core = asc_get_block_idx(), base = bs / sendCores_, remainder = bs % sendCores_;
-        count_ = base + (core < remainder ? 1U : 0U);
-        start_ = core * base + (core < remainder ? core : remainder);
+        const uint32_t coreIndex = coreIdx_, base = bs / sendCores_, remainder = bs % sendCores_;
+        count_ = base + (coreIndex < remainder ? 1U : 0U);
+        start_ = coreIndex * base + (coreIndex < remainder ? coreIndex : remainder);
         data_ = DispatchServerDedupDataLayout(bs, h, k, experts, inputMode);
         data_.dispatchOffset += DispatchServerDedupWindowOffset(magic);
         x_ = x; inputScales_ = inputScales;
@@ -56,9 +60,9 @@ public:
         if (profile && profile->Enabled()) {
             const uint32_t routes = bs_ * k_;
             profile->Value<43>(enableDedup_ ? count_ * k_ :  // w43: send_route_count
-                routes / sendCores_ + (asc_get_block_idx() < routes % sendCores_ ? 1U : 0U));
+                routes / sendCores_ + (coreIdx_ < routes % sendCores_ ? 1U : 0U));
         }
-        if (!LlSenderHasWork(enableDedup_, count_, bs_ * k_, asc_get_block_idx())) return;
+        if (!LlSenderHasWork(enableDedup_, count_, bs_ * k_, coreIdx_)) return;
         // The count image at UB0 remains owned by MTE3 until count retirement.
         LlDispatchC::UbLayout layout(reservedBytes);
         if (LlTransport::Rdma(args_)) rdmaBatch_.SetCountRetirement(retirement);
@@ -101,7 +105,7 @@ public:
             rdmaWorkspace_ = layout.Allocate<uint8_t>(
                 (stageSlots + 1U) * LlTransport::DispatchRdmaBatch::kWorkspaceBytes);
             rdmaBatch_.SetWorkspace(rdmaWorkspace_);
-            rdmaBatch_.Init(args_, tokenStride);
+            rdmaBatch_.Init(args_, tokenStride, coreContext_);
         }
         const uint32_t available = (LlDispatchC::kUbBytes - layout.UsedBytes()) / uint32_t(data_.tokenStride);
         lanes_ = available < 8U ? available : 8U;
@@ -151,7 +155,7 @@ private:
     }
     __aicore__ inline void SendWithDedup()
     {
-        const uint32_t rankInGroup = uint32_t(args_->rank) % Group, sendCore = asc_get_block_idx();
+        const uint32_t rankInGroup = uint32_t(args_->rank) % Group, sendCore = coreIdx_;
         for (uint32_t token = 0; token < count_; ++token) {
             uint32_t directMask = 0U, firstHopCount = 0U;
             Classify(token, directMask, firstHopCount);
@@ -200,7 +204,7 @@ private:
     }
     __aicore__ inline void SendWithoutDedup()
     {
-        const uint32_t total = bs_ * k_, core = asc_get_block_idx(), base = total / sendCores_;
+        const uint32_t total = bs_ * k_, core = coreIdx_, base = total / sendCores_;
         const uint32_t remainder = total % sendCores_, begin = core * base + (core < remainder ? core : remainder);
         const uint32_t count = base + (core < remainder ? 1U : 0U), serverNum = args_->rankSize / Group;
         if (serverNum < 16U) {
@@ -357,7 +361,7 @@ private:
         if (LlTransport::RemoteWrite(args_, destination)) rdmaBatch_.Enqueue(destination, offset, out, lanes_ > 1U);
         else
 #endif
-            LlTransport::Packet(args_, destination, offset, out, uint32_t(data_.tokenStride), 7U);
+            LlTransport::Packet(args_, destination, offset, out, uint32_t(data_.tokenStride), coreContext_, 7U);
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
         if (packetProfile_) packetProfile_->GroupSubmitted();
 #endif
@@ -384,6 +388,8 @@ private:
     uint32_t inputSequence_ = 0U, inputBytes_ = 0U, cachedTailEntries_ = 0U;
     bool hasScratch_ = false, enableDedup_ = false, fullMeshFirstHop_ = false;
     bool prequantized_ = false, needQuantize_ = false, e4m3_ = true;
+    deepep::CoreContext coreContext_{};
+    uint32_t coreIdx_ = 0U, coreNum_ = 0U;
     uint32_t sendCores_ = 0U, bs_ = 0U, h_ = 0U, k_ = 0U, experts_ = 0U, localExperts_ = 0U;
     uint32_t start_ = 0U, count_ = 0U, inputRowBytes_ = 0U, lanes_ = 0U, packets_ = 0U, directCount_ = 0U;
     EpServerDedupDataLayout data_{};

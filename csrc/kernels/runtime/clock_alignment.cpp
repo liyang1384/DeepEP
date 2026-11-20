@@ -91,9 +91,9 @@ __aicore__ inline uint64_t Publish(const __gm__ Args* args, uint32_t peer, uint6
         LlDispatchC::Sync<PIPE_MTE3, PIPE_S>();
         const uint64_t postedBegin = Clock();
         LlTransport::Put(args, peer, LlTransport::RemoteAddress(args, peer, offset),
-                         stage, sizeof(Protocol), scratch, 7U);
+                         stage, sizeof(Protocol), scratch, deepep::OrdinaryCoreContext(), 7U);
         const uint64_t postedEnd = Clock();
-        LlTransport::Quiet(peer, scratch, 7U);
+        LlTransport::Quiet(peer, scratch, deepep::OrdinaryCoreContext(), 7U);
         return Midpoint(postedBegin, postedEnd);
     }
     LlDispatchC::Store(

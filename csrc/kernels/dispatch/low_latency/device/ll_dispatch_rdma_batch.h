@@ -1,7 +1,7 @@
 #pragma once
-#include "ll_transport.h"
-#include "ll_count_frame_transport.h"
-#include "../common/ll_reference_profile_device.h"
+#include <kernels/dispatch/low_latency/device/ll_transport.h>
+#include <kernels/dispatch/low_latency/device/ll_count_frame_transport.h>
+#include <kernels/dispatch/low_latency/common/ll_reference_profile_device.h>
 
 namespace LlTransport {
 // One staged-but-not-posted packet. Reuse the existing GM batch and output
@@ -16,6 +16,7 @@ public:
 private:
     static constexpr uint32_t kPeerWords = (DispatchDedup::DISPATCH_DEDUP_MAX_RANK_SIZE + 31U) / 32U;
     const __gm__ Args* args_ = nullptr;
+    deepep::CoreContext core_{};
     uint32_t bytes_ = 0, capacity_ = 0, count_ = 0;
     GM_ADDR stageBase_ = nullptr;
     GM_ADDR pendingStage_ = nullptr;
@@ -42,7 +43,7 @@ private:
             if (!mask) continue;
             for (uint32_t bit = 0; bit < 32U; ++bit) if (mask & (1U << bit)) {
                 const uint32_t peer = word * 32U + bit;
-                Quiet(peer, quietScratch_);
+                Quiet(peer, quietScratch_, core_);
                 if (countRetirement_) countRetirement_->Completed(peer);
             }
             peerMask_[word] = 0U;
@@ -60,15 +61,15 @@ public:
     // One workspace per GM stage slot plus one dedicated Quiet workspace.
     // Call before Init so capacity_ can place the Quiet slot after all slots.
     __aicore__ inline void SetWorkspace(__ubuf__ uint8_t* base) { workspaceBase_ = base; }
-    __aicore__ inline void Init(const __gm__ Args* args, uint32_t bytes) {
+    __aicore__ inline void Init(const __gm__ Args* args, uint32_t bytes, deepep::CoreContext core) {
         if (count_) { trap(); return; }
-        args_ = args; bytes_ = bytes; count_ = 0;
+        args_ = args; bytes_ = bytes; core_ = core; count_ = 0;
         if (!bytes || bytes % 512U || bytes > LlRdma::kCoreBytes || !workspaceBase_) { trap(); return; }
         const uint32_t slots = LlRdma::kCoreBytes / bytes_;
         capacity_ = slots; // use every complete packet slot in the 128KiB GM stage
         quietScratch_ = workspaceBase_ + uint64_t(capacity_) * kWorkspaceBytes;
         if (uint32_t(args_->rankSize) > DispatchDedup::kLlPhysicalRanksPerHost)
-            stageBase_ = Stage(args_, capacity_ * bytes_);
+            stageBase_ = Stage(args_, capacity_ * bytes_, core_);
     }
     __aicore__ inline bool Pending() const { return count_ != 0U; }
     __aicore__ inline bool HasStaged() const { return staged_; }
@@ -106,7 +107,7 @@ public:
         // Only after the wait may NIC read GM; the SDK borrows this slot's
         // workspace until the batch Quiet below returns.
         Put(args_, pendingPeer_, RemoteAddress(args_, pendingPeer_, pendingOffset_),
-            pendingStage_, bytes_, workspaceBase_ + uint64_t(pendingSlot_) * kWorkspaceBytes);
+            pendingStage_, bytes_, workspaceBase_ + uint64_t(pendingSlot_) * kWorkspaceBytes, core_);
 #ifdef DEEPEP_LL_REFERENCE_PROFILE
         if (profile_) profile_->PutReturned(pendingSecond_);
 #endif

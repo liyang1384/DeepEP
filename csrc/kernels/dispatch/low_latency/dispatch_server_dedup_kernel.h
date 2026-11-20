@@ -4,11 +4,12 @@
 #ifndef DISPATCH_SERVER_DEDUP_KERNEL_H
 #define DISPATCH_SERVER_DEDUP_KERNEL_H
 
-#include "common/ll_reference_profile_device.h"
-#include "device/dispatch_server_dedup_magic.h"
-#include "device/dispatch_server_dedup_counts.h"
-#include "device/dispatch_server_dedup_send.h"
-#include "device/dispatch_server_dedup_recv.h"
+#include <kernels/dispatch/low_latency/common/ll_reference_profile_device.h>
+#include <kernels/common/core_context.h>
+#include <kernels/dispatch/low_latency/device/dispatch_server_dedup_magic.h>
+#include <kernels/dispatch/low_latency/device/dispatch_server_dedup_counts.h>
+#include <kernels/dispatch/low_latency/device/dispatch_server_dedup_send.h>
+#include <kernels/dispatch/low_latency/device/dispatch_server_dedup_recv.h>
 
 namespace DispatchDedup {
 // The input element class and the group size are the only compile-time axes;
@@ -23,28 +24,31 @@ public:
                                 uint32_t h, uint32_t topK, uint32_t experts, uint32_t expertTokenNumsType,
                                 EpServerDedupInputMode inputMode, bool e4m3,
                                 GM_ADDR inputScales = nullptr, bool enableDedup = true,
-                                LlReferenceProfile::DeviceProfile* profile = nullptr)
+                                LlReferenceProfile::DeviceProfile* profile = nullptr,
+                                deepep::CoreContext core = deepep::OrdinaryCoreContext())
     {
 
         profile_ = profile;
         args_ = reinterpret_cast<const __gm__ DispatchDedup::CommArgs*>(commArgs);
-        core_ = asc_get_block_idx();
-        sendCores_ = asc_get_block_num() / 2U;
+        coreContext_ = core;
+        core_ = core.index;
+        coreNum_ = core.count;
+        sendCores_ = coreNum_ / 2U;
 
         if (profile_) profile_->Mark<2>();  // w2: magic_begin
         const uint32_t magic = RotateDispatchServerDedupMagic(args_, core_);
         if (profile_) profile_->Mark<3>();  // w3: magic_end
 
         counts_.Init(commArgs, expertIds, expertTokenNumsOut, sendCountsOut, bs, topK, experts, expertTokenNumsType,
-                     magic, profile_);
+                     magic, profile_, core);
         if (profile_) profile_->Mark<4>();  // w4: counts_init_end
 
         if (core_ < sendCores_)
             sender_.Init(args_, x, expertIds, expertScales, sourceMaskOut, expertScalesOut, bs, h, topK, experts,
-                         inputMode, e4m3, magic, inputScales, enableDedup);
+                         inputMode, e4m3, magic, inputScales, enableDedup, 0U, core);
         else
             receiver_.Init(args_, expandXOut, dynamicScalesOut, tokenTypeOut, destinationIndexOut, relayReadIndexOut,
-                           bs, h, topK, experts, inputMode, magic, enableDedup);
+                           bs, h, topK, experts, inputMode, magic, enableDedup, core);
         if (profile_) profile_->Mark<5>();  // w5: role_init_end
     }
 
@@ -114,7 +118,8 @@ private:
     ServerDedupSender<XType, Group> sender_;
     ServerDedupReceiver receiver_;
     const __gm__ DispatchDedup::CommArgs* args_ = nullptr;
-    uint32_t core_ = 0, sendCores_ = 0;
+    deepep::CoreContext coreContext_{};
+    uint32_t core_ = 0, coreNum_ = 0, sendCores_ = 0;
 };
 }  // namespace DispatchDedup
 #endif

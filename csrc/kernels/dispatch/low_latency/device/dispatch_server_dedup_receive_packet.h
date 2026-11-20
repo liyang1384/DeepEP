@@ -1,8 +1,8 @@
 // Copyright (c) 2026, Lu Lu
 #pragma once
-#include "ll_dispatch_c_api.h"
-#include "../common/ep_memory_server_dedup_data_layout.h"
-#include "../common/ep_memory_server_dedup_protocol.h"
+#include <kernels/dispatch/low_latency/device/ll_dispatch_c_api.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_data_layout.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_protocol.h>
 
 namespace DispatchDedup {
 __aicore__ inline uint32_t ServerDedupWireOffset(uint32_t logical)

@@ -6,8 +6,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include "ep_memory_server_dedup_data_layout.h"
-#include "ll_core_config.h"
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_data_layout.h>
+#include <kernels/dispatch/low_latency/common/ll_core_config.h>
 
 namespace DispatchDedup {
 struct EpMemoryServerDedupLayout {
@@ -47,9 +47,9 @@ void BuildDispatchServerDedupLayout(int64_t rankSize, int64_t bs, int64_t h, int
 #include <limits>
 #include <stdexcept>
 
-#include "comm_args.h"
-#include "ep_memory_server_dedup_protocol.h"
-#include "ep_memory_server_dedup_count_layout.h"
+#include <kernels/dispatch/low_latency/common/comm_args.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_protocol.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_count_layout.h>
 
 namespace DispatchDedup {
 namespace {

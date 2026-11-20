@@ -5,7 +5,7 @@
 #define ASCEND_EP_SERVER_DEDUP_INPUT_H
 
 #include <cstdint>
-#include "comm_args.h"
+#include <kernels/dispatch/low_latency/common/comm_args.h>
 
 namespace DispatchDedup {
 // Wire FP8 does not imply internal quantization. Values also form the tiling ABI.

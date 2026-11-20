@@ -1,13 +1,13 @@
 // Copyright (c) 2026, Lu Lu
 // Modified by ryan_li 2026
 #pragma once
-#include "ll_dispatch_c_api.h"
-#include "ll_transport.h"
-#include "../common/ll_reference_profile_device.h"
-#include "../common/ep_memory_server_dedup_protocol.h"
-#include "../../../common/ep_packet_receive_layout.h"
-#include "dispatch_server_dedup_receive_tasks.h"
-#include "dispatch_server_dedup_receive_packet.h"
+#include <kernels/dispatch/low_latency/device/ll_dispatch_c_api.h>
+#include <kernels/dispatch/low_latency/device/ll_transport.h>
+#include <kernels/dispatch/low_latency/common/ll_reference_profile_device.h>
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_protocol.h>
+#include <kernels/common/ep_packet_receive_layout.h>
+#include <kernels/dispatch/low_latency/device/dispatch_server_dedup_receive_tasks.h>
+#include <kernels/dispatch/low_latency/device/dispatch_server_dedup_receive_packet.h>
 
 namespace DispatchDedup {
 class ServerDedupReceiver {
@@ -15,13 +15,14 @@ public:
     __aicore__ inline void Init(const __gm__ CommArgs* args, GM_ADDR expandX, GM_ADDR dynamicScales,
         GM_ADDR tokenType, GM_ADDR destinationIndex, GM_ADDR relayReadIndex, uint32_t bs,
         uint32_t h, uint32_t k, uint32_t experts, EpServerDedupInputMode inputMode,
-        int64_t magic = 0, bool enableDedup = true)
+        int64_t magic = 0, bool enableDedup = true,
+        deepep::CoreContext core = deepep::OrdinaryCoreContext())
     {
         args_ = args; wireFp8_ = inputMode != EpServerDedupInputMode::Plain16;
-        coreNum_ = asc_get_block_num(); recvCoreNum_ = coreNum_ / 2U;
+        coreIdx_ = core.index; coreNum_ = core.count; coreContext_ = core; recvCoreNum_ = coreNum_ / 2U;
         enableDedup_ = enableDedup; bs_ = bs; k_ = k; experts_ = experts;
         localExperts_ = experts / uint32_t(args_->rankSize);
-        receiver_ = asc_get_block_idx() - recvCoreNum_;
+        receiver_ = int32_t(coreIdx_) - int32_t(recvCoreNum_);
         hiddenBytes_ = wireFp8_ ? h : h * 2U;
         data_ = DispatchServerDedupDataLayout(bs, h, k, experts, inputMode);
         windowOffset_ = DispatchServerDedupWindowOffset(magic);
@@ -260,7 +261,7 @@ private:
                 const uint32_t destinationRank = expert / localExperts_;
                 LlTransport::Packet(args_, destinationRank, DispatchServerDedupDispatchOffset(data_, source,
                     destinationRank, expert % localExperts_, q, ranks, localExperts_, bs_),
-                    wire, uint32_t(data_.tokenStride), lane);
+                    wire, uint32_t(data_.tokenStride), coreContext_, lane);
             }
         }
         asc_sync_notify(PIPE_MTE3, PIPE_MTE2, event_t(lane));
@@ -301,7 +302,8 @@ private:
     const __gm__ CommArgs* args_ = nullptr;
     bool enableDedup_ = false, wireFp8_ = false;
     uint64_t windowOffset_ = 0U;
-    uint32_t recvCoreNum_ = 0U, coreNum_ = 0U, bs_ = 0U, k_ = 0U, experts_ = 0U;
+    deepep::CoreContext coreContext_{};
+    uint32_t coreIdx_ = 0U, recvCoreNum_ = 0U, coreNum_ = 0U, bs_ = 0U, k_ = 0U, experts_ = 0U;
     uint32_t localExperts_ = 0U, receiver_ = 0U, hiddenBytes_ = 0U, laneStride_ = 0U, lanes_ = 0U;
     EpServerDedupDataLayout data_{};
     ServerDedupReceiveTasks tasks_;

@@ -4,16 +4,16 @@
 #ifndef DISPATCH_DEDUP_EP_MEMORY_SERVER_DEDUP_COUNT_LAYOUT_H
 #define DISPATCH_DEDUP_EP_MEMORY_SERVER_DEDUP_COUNT_LAYOUT_H
 
-#include "comm_args.h"
-#include "ll_compile_attrs.h"
-#include "ll_core_config.h"
-#include "ll_count_frame_layout.h"
+#include <kernels/dispatch/low_latency/common/comm_args.h>
+#include <kernels/dispatch/low_latency/common/ll_compile_attrs.h>
+#include <kernels/dispatch/low_latency/common/ll_core_config.h>
+#include <kernels/dispatch/low_latency/common/ll_count_frame_layout.h>
 
 // Count participation threshold is independent of the runtime send/receive split.
 #ifndef DISPATCH_SERVER_DEDUP_ALL_CORE_COUNT_BS_THRESHOLD
 #define DISPATCH_SERVER_DEDUP_ALL_CORE_COUNT_BS_THRESHOLD 512U
 #endif
-#include "ep_memory_server_dedup_mode.h"
+#include <kernels/dispatch/low_latency/common/ep_memory_server_dedup_mode.h>
 
 namespace DispatchDedup {
 // BS below this threshold uses all launched cores for Count; otherwise only receivers.

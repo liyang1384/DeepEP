@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
-#include "ll_compile_attrs.h"
-#include "../../../common/ep_server_order.h"
+#include <kernels/dispatch/low_latency/common/ll_compile_attrs.h>
+#include <kernels/common/ep_server_order.h>
 
 namespace DispatchDedup {
 // Rotate an existing permutation; never change route ownership or destination.

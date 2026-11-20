@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-#include "ll_compile_attrs.h"
+#include <kernels/dispatch/low_latency/common/ll_compile_attrs.h>
 
 namespace LlStageTimer {
 constexpr uint32_t kSchema = 3U;

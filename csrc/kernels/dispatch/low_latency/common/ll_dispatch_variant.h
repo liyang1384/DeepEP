@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Lu Lu
 #pragma once
 #include <cstdint>
-#include "ll_compile_attrs.h"
+#include <kernels/dispatch/low_latency/common/ll_compile_attrs.h>
 
 namespace DispatchDedup {
 // Internal dispatch classification, independent of the shared-memory
